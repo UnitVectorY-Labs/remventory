@@ -37,3 +37,15 @@ The MCP server is the stable tool surface for Remventory. Remy and remote MCP cl
 - Confirm or reject proposals.
 - List items in a category.
 - Query whether an item appears to exist.
+
+## Current Prototype Surface
+
+Before the Remy UI and MCP server are complete, the HTTP API can exercise the same core proposal behavior:
+
+- Create category proposals.
+- Approve or reject proposals.
+- Read category definitions.
+- Create item proposals.
+- List items by category.
+
+This is a testing surface for the prototype loop, not the intended final primary user experience.
