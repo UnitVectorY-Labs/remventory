@@ -46,6 +46,7 @@ func New(opts Options) http.Handler {
 	}
 	mux.HandleFunc("GET /api/config", api.withToken(api.configStatus))
 	mux.HandleFunc("POST /api/remy/request", api.withToken(api.remyRequest))
+	mux.HandleFunc("POST /api/query_inventory", api.withToken(api.queryInventory))
 	mux.HandleFunc("GET /api/categories", api.withToken(api.listCategories))
 	mux.HandleFunc("GET /api/categories/{id}", api.withToken(api.getCategory))
 	mux.HandleFunc("GET /api/items", api.withToken(api.listItems))
@@ -141,6 +142,29 @@ func (a api) remyRequest(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusOK, response)
+}
+
+func (a api) queryInventory(w http.ResponseWriter, r *http.Request) {
+	if a.remy == nil {
+		writeError(w, http.StatusServiceUnavailable, "remy is not configured")
+		return
+	}
+
+	var payload struct {
+		Query      string `json:"query"`
+		CategoryID string `json:"category_id"`
+	}
+	if !decodeJSON(w, r, &payload) {
+		return
+	}
+
+	result, err := a.remy.QueryInventory(r.Context(), payload.Query, payload.CategoryID)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	writeJSON(w, http.StatusOK, result)
 }
 
 func (a api) listCategories(w http.ResponseWriter, r *http.Request) {

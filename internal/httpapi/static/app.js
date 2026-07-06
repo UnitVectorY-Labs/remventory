@@ -11,6 +11,12 @@ form.addEventListener("submit", async (event) => {
   await askRemy(message);
 });
 
+const initialMessage = new URLSearchParams(window.location.search).get("message");
+if (initialMessage) {
+  input.value = initialMessage;
+  askRemy(initialMessage);
+}
+
 async function askRemy(message) {
   setState("Thinking");
   stage.innerHTML = "";
@@ -59,6 +65,8 @@ function renderComponent(component) {
       return proposalCard(component.data, "Item Proposal");
     case "item_list":
       return itemList(component.data);
+    case "query_result":
+      return queryResult(component.data);
     case "category_list":
       return categoryList(component.data);
     case "text":
@@ -77,8 +85,11 @@ function proposalCard(proposal, title) {
     <div class="grid">
       ${field("Status", proposal.status)}
       ${field("Type", proposal.type)}
+      ${field("Operation", payload.operation || "")}
       ${field("Name", payload.name || payload.title || "")}
       ${field("Description", payload.description || "")}
+      ${field("Quantity", payload.quantity || "")}
+      ${field("Quantity Change", payload.quantity_delta || "")}
     </div>
   `;
 
@@ -103,7 +114,10 @@ function proposalCard(proposal, title) {
     const reject = document.createElement("button");
     reject.className = "danger";
     reject.textContent = "Reject";
-    reject.addEventListener("click", () => decide(proposal.id, false));
+    reject.addEventListener("click", () => {
+      const reason = window.prompt("Why reject this proposal?", "");
+      decide(proposal.id, false, reason || "Rejected in web UI");
+    });
     actions.append(approve, reject);
     card.append(actions);
   }
@@ -111,12 +125,12 @@ function proposalCard(proposal, title) {
   return card;
 }
 
-async function decide(id, approve) {
+async function decide(id, approve, reason = "") {
   setState("Confirming");
   try {
     const proposal = await api(`/api/proposals/${id}/decision`, {
       method: "POST",
-      body: JSON.stringify({ approve, reason: approve ? "" : "Rejected in web UI" }),
+      body: JSON.stringify({ approve, reason: approve ? "" : reason }),
     });
     renderResponse({
       state: "completed",
@@ -126,6 +140,38 @@ async function decide(id, approve) {
   } catch (error) {
     renderError(error);
   }
+}
+
+function queryResult(data) {
+  const card = document.createElement("article");
+  card.className = "card";
+  card.innerHTML = `
+    <h2>Inventory Check</h2>
+    <div class="grid">
+      ${field("Judgment", data.judgment)}
+      ${field("Confidence", data.confidence || "")}
+      ${field("Category", data.category?.name || "")}
+    </div>
+    <p class="summary">${escapeHTML(data.summary || "")}</p>
+  `;
+  const matches = data.matches || [];
+  if (!matches.length) {
+    return card;
+  }
+  const matchList = document.createElement("div");
+  matchList.className = "card";
+  matchList.innerHTML = "<h3>Matches</h3>";
+  for (const item of matches) {
+    const row = document.createElement("div");
+    row.className = "field";
+    row.innerHTML = `<div class="value"><strong>${escapeHTML(item.title)}</strong> · Quantity ${escapeHTML(String(item.quantity))}</div>`;
+    if (item.attributes) {
+      row.append(jsonCard("Details", item.attributes));
+    }
+    matchList.append(row);
+  }
+  card.append(matchList);
+  return card;
 }
 
 function itemList(data) {

@@ -48,7 +48,7 @@ MCP clients can connect to the streamable HTTP endpoint:
 http://localhost:8080/mcp
 ```
 
-The initial tool surface includes Remy requests, category reads, item listing, and proposal confirmation. Data-changing requests still produce proposals first.
+The initial tool surface includes Remy requests, category reads, proposal creation, proposal confirmation, item listing, and inventory queries. Data-changing requests still produce proposals first.
 
 ## Prototype Proposal Flow
 
@@ -101,6 +101,16 @@ Approve the item proposal with the same proposal decision endpoint, then list it
 ```sh
 curl 'http://localhost:8080/api/items?category_id=<category-id>'
 ```
+
+Check whether an item already exists:
+
+```sh
+curl -X POST http://localhost:8080/api/query_inventory \
+  -H 'Content-Type: application/json' \
+  -d '{"query": "Do I already have Super Mario Bros. Wonder?", "category_id": "<category-id>"}'
+```
+
+When adding an item through Remy, Remventory checks the relevant category first. If a clear match already exists, Remy proposes a quantity change instead of silently creating a duplicate.
 
 ## Docker
 

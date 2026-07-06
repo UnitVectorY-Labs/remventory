@@ -48,6 +48,21 @@ type itemDraft struct {
 	Quantity     int             `json:"quantity"`
 }
 
+type QueryResult struct {
+	Judgment   string         `json:"judgment"`
+	Confidence string         `json:"confidence,omitempty"`
+	Summary    string         `json:"summary"`
+	Category   store.Category `json:"category"`
+	Matches    []store.Item   `json:"matches"`
+}
+
+type modelQueryResult struct {
+	Judgment       string   `json:"judgment"`
+	Confidence     string   `json:"confidence"`
+	Summary        string   `json:"summary"`
+	MatchedItemIDs []string `json:"matched_item_ids"`
+}
+
 func New(cfg config.Config, repo *store.Store) *Service {
 	return &Service{
 		cfg:   cfg,
@@ -77,6 +92,8 @@ func (s *Service) Handle(ctx context.Context, req Request) (Response, error) {
 	switch {
 	case looksLikeCategoryRequest(lower, categories):
 		return s.proposeCategory(ctx, message)
+	case looksLikeExistenceQuery(lower):
+		return s.queryInventory(ctx, message, categories)
 	case looksLikeListRequest(lower):
 		return s.listItems(ctx, message, categories)
 	case looksLikeItemAdd(lower):
@@ -150,6 +167,46 @@ func (s *Service) proposeItem(ctx context.Context, message string, categories []
 		}, nil
 	}
 
+	items, err := s.store.ListItems(ctx, category.ID, 200, 0)
+	if err != nil {
+		return Response{}, err
+	}
+	duplicate, err := s.matchExistingItem(ctx, message, *category, items, draft.Title)
+	if err != nil {
+		return Response{}, err
+	}
+	if duplicate.Judgment == "yes" && len(duplicate.Matches) > 0 {
+		proposal, err := s.store.CreateItemProposal(ctx, store.ItemProposalPayload{
+			Operation:     "quantity_adjust",
+			CategoryID:    category.ID,
+			ItemID:        duplicate.Matches[0].ID,
+			Title:         duplicate.Matches[0].Title,
+			Attributes:    duplicate.Matches[0].Attributes,
+			QuantityDelta: maxInt(draft.Quantity, 1),
+		})
+		if err != nil {
+			return Response{}, err
+		}
+		return Response{
+			State:   "proposing",
+			Summary: "This looks like something already in inventory. Review the quantity change before it is committed.",
+			Components: []Component{
+				{Type: "query_result", Data: duplicate},
+				{Type: "item_proposal", Data: proposal},
+			},
+		}, nil
+	}
+	if duplicate.Judgment == "uncertain" && len(duplicate.Matches) > 0 {
+		return Response{
+			State:   "completed",
+			Summary: "I found possible matches. Review them before deciding whether this should be added as a new item.",
+			Components: []Component{{
+				Type: "query_result",
+				Data: duplicate,
+			}},
+		}, nil
+	}
+
 	proposal, err := s.store.CreateItemProposal(ctx, store.ItemProposalPayload{
 		Operation:  "create",
 		CategoryID: category.ID,
@@ -198,6 +255,59 @@ func (s *Service) listItems(ctx context.Context, message string, categories []st
 				"category": category,
 				"items":    items,
 			},
+		}},
+	}, nil
+}
+
+func (s *Service) QueryInventory(ctx context.Context, message string, categoryID string) (QueryResult, error) {
+	categories, err := s.store.ListCategories(ctx, 100, 0)
+	if err != nil {
+		return QueryResult{}, err
+	}
+
+	var category *store.Category
+	if categoryID != "" {
+		for i := range categories {
+			if categories[i].ID == categoryID {
+				category = &categories[i]
+				break
+			}
+		}
+	} else {
+		category = bestCategoryMatch(message, categories)
+	}
+	if category == nil {
+		return QueryResult{
+			Judgment: "uncertain",
+			Summary:  "I could not confidently choose a category for this query.",
+		}, nil
+	}
+
+	items, err := s.store.ListItems(ctx, category.ID, 500, 0)
+	if err != nil {
+		return QueryResult{}, err
+	}
+	return s.matchExistingItem(ctx, message, *category, items, message)
+}
+
+func (s *Service) queryInventory(ctx context.Context, message string, categories []store.Category) (Response, error) {
+	category := bestCategoryMatch(message, categories)
+	categoryID := ""
+	if category != nil {
+		categoryID = category.ID
+	}
+
+	result, err := s.QueryInventory(ctx, message, categoryID)
+	if err != nil {
+		return Response{}, err
+	}
+
+	return Response{
+		State:   "completed",
+		Summary: result.Summary,
+		Components: []Component{{
+			Type: "query_result",
+			Data: result,
 		}},
 	}, nil
 }
@@ -253,6 +363,53 @@ Categories: `+string(categoryBytes), message, &draft)
 		Title:        fallbackItemTitle(message),
 		Attributes:   json.RawMessage(`{}`),
 		Quantity:     1,
+	}, nil
+}
+
+func (s *Service) matchExistingItem(ctx context.Context, message string, category store.Category, items []store.Item, title string) (QueryResult, error) {
+	if len(items) == 0 {
+		return QueryResult{
+			Judgment: "no",
+			Summary:  "No matching items are in this category yet.",
+			Category: category,
+			Matches:  nil,
+		}, nil
+	}
+
+	if s.modelConfigured() {
+		var modelResult modelQueryResult
+		itemBytes, _ := json.Marshal(items)
+		err := s.completeJSON(ctx, `Return only JSON for an inventory existence check.
+Schema:
+{"judgment":"yes|no|uncertain","confidence":"low|medium|high","summary":"string","matched_item_ids":["string"]}
+Use yes only when the inventory clearly contains the requested item. Use uncertain for likely variants or partial matches.
+Inventory items: `+string(itemBytes), message, &modelResult)
+		if err == nil && validJudgment(modelResult.Judgment) {
+			return queryResultFromModel(modelResult, category, items), nil
+		}
+	}
+
+	matches := fallbackMatches(message+" "+title, items)
+	judgment := "no"
+	summary := "No matching item appears to be in this category."
+	confidence := "medium"
+	if len(matches) > 0 {
+		judgment = "uncertain"
+		summary = "Found possible matching item(s)."
+		confidence = "low"
+		if normalizedTitle(matches[0].Title) == normalizedTitle(title) {
+			judgment = "yes"
+			summary = "Found a matching item already in inventory."
+			confidence = "medium"
+		}
+	}
+
+	return QueryResult{
+		Judgment:   judgment,
+		Confidence: confidence,
+		Summary:    summary,
+		Category:   category,
+		Matches:    matches,
 	}, nil
 }
 
@@ -326,6 +483,15 @@ func looksLikeItemAdd(message string) bool {
 	return strings.HasPrefix(message, "add ") || strings.Contains(message, " add ") || strings.Contains(message, "inventory ")
 }
 
+func looksLikeExistenceQuery(message string) bool {
+	return strings.Contains(message, "already have") ||
+		strings.Contains(message, "do i have") ||
+		strings.Contains(message, "do we have") ||
+		strings.Contains(message, "have this") ||
+		strings.Contains(message, "own this") ||
+		strings.Contains(message, "in my inventory")
+}
+
 func looksLikeListRequest(message string) bool {
 	return strings.HasPrefix(message, "show ") || strings.HasPrefix(message, "list ") || strings.Contains(message, "show me")
 }
@@ -390,4 +556,100 @@ func fallbackItemTitle(message string) string {
 		return "Untitled item"
 	}
 	return strings.Title(title)
+}
+
+func queryResultFromModel(modelResult modelQueryResult, category store.Category, items []store.Item) QueryResult {
+	matches := make([]store.Item, 0, len(modelResult.MatchedItemIDs))
+	seen := map[string]bool{}
+	for _, id := range modelResult.MatchedItemIDs {
+		for _, item := range items {
+			if item.ID == id && !seen[id] {
+				matches = append(matches, item)
+				seen[id] = true
+			}
+		}
+	}
+	if modelResult.Summary == "" {
+		modelResult.Summary = defaultQuerySummary(modelResult.Judgment, len(matches))
+	}
+	return QueryResult{
+		Judgment:   modelResult.Judgment,
+		Confidence: modelResult.Confidence,
+		Summary:    modelResult.Summary,
+		Category:   category,
+		Matches:    matches,
+	}
+}
+
+func defaultQuerySummary(judgment string, matchCount int) string {
+	switch judgment {
+	case "yes":
+		return fmt.Sprintf("Found %d matching item(s).", matchCount)
+	case "uncertain":
+		return fmt.Sprintf("Found %d possible match(es).", matchCount)
+	default:
+		return "No matching item appears to be in inventory."
+	}
+}
+
+func validJudgment(judgment string) bool {
+	return judgment == "yes" || judgment == "no" || judgment == "uncertain"
+}
+
+func fallbackMatches(text string, items []store.Item) []store.Item {
+	terms := significantTerms(text)
+	if len(terms) == 0 {
+		return nil
+	}
+	matches := make([]store.Item, 0)
+	for _, item := range items {
+		score := 0
+		itemText := strings.ToLower(item.Title + " " + string(item.Attributes))
+		for _, term := range terms {
+			if strings.Contains(itemText, term) {
+				score++
+			}
+		}
+		if score >= minInt(2, len(terms)) {
+			matches = append(matches, item)
+		}
+	}
+	return matches
+}
+
+func significantTerms(text string) []string {
+	words := strings.FieldsFunc(strings.ToLower(text), func(r rune) bool {
+		return (r < 'a' || r > 'z') && (r < '0' || r > '9')
+	})
+	terms := make([]string, 0, len(words))
+	stop := map[string]bool{
+		"add": true, "my": true, "the": true, "for": true, "with": true, "this": true,
+		"do": true, "i": true, "have": true, "already": true, "show": true, "me": true,
+		"inventory": true, "sealed": true, "open": true, "opened": true,
+	}
+	for _, word := range words {
+		if len(word) < 3 || stop[word] {
+			continue
+		}
+		terms = append(terms, word)
+	}
+	return terms
+}
+
+func normalizedTitle(title string) string {
+	return strings.Join(significantTerms(title), " ")
+}
+
+func minInt(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
+}
+
+func maxInt(a, b int) int {
+	if a > b {
+		return a
+	}
+	return b
 }

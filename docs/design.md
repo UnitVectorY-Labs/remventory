@@ -47,6 +47,7 @@ The current web UI and HTTP API can exercise the same core proposal behavior:
 - Approve or reject proposals.
 - Read category definitions.
 - Create item proposals.
+- Check whether an item appears to already exist.
 - List items by category.
 
 The MCP endpoint exposes the same early tool boundary for remote clients.
