@@ -9,9 +9,9 @@ Remventory is a single Go application for a self-hosted, agent-first inventory p
 - Go for the server, persistence, MCP, agent integration, and web backend.
 - Postgres for users, categories, attributes, items, proposals, settings, and agent events.
 - `github.com/mark3labs/mcp-go` for the MCP server.
-- `github.com/google/adk-go` for Remy.
+- Google ADK for Go for Remy. The current Go module import path is `google.golang.org/adk`, even though the upstream repository is `github.com/google/adk-go`.
 - OpenAI-compatible model configuration for local or remote LLMs.
-- Trial `github.com/ag-ui-protocol/ag-ui` for structured agent/UI events.
+- Trial `github.com/ag-ui-protocol/ag-ui` for structured agent/UI events. If the repository does not expose a Go package, keep local event payloads protocol-shaped and document the gap.
 - One Docker image for the application container.
 
 ## Implementation Rules

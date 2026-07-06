@@ -38,6 +38,10 @@ The MCP server is the stable tool surface for Remventory. Remy and remote MCP cl
 - List items in a category.
 - Query whether an item appears to exist.
 
+## Agent and UI Events
+
+Remy is registered through the Google ADK for Go runtime. The prototype also emits AG-UI-style activity and component events alongside the current structured response payloads so the web UI has a protocol-shaped path for richer generated interfaces.
+
 ## Current Prototype Surface
 
 The current web UI and HTTP API can exercise the same core proposal behavior:

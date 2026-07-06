@@ -10,14 +10,18 @@ import (
 	"strings"
 	"time"
 
+	"github.com/UnitVectorY-Labs/remventory/internal/agentruntime"
+	"github.com/UnitVectorY-Labs/remventory/internal/agui"
 	"github.com/UnitVectorY-Labs/remventory/internal/config"
 	"github.com/UnitVectorY-Labs/remventory/internal/store"
+	"google.golang.org/adk/agent"
 )
 
 type Service struct {
 	cfg    config.Config
 	store  *store.Store
 	client *http.Client
+	agent  agent.Agent
 }
 
 type Request struct {
@@ -25,9 +29,10 @@ type Request struct {
 }
 
 type Response struct {
-	State      string      `json:"state"`
-	Summary    string      `json:"summary"`
-	Components []Component `json:"components"`
+	State      string       `json:"state"`
+	Summary    string       `json:"summary"`
+	Components []Component  `json:"components"`
+	Events     []agui.Event `json:"events,omitempty"`
 }
 
 type Component struct {
@@ -64,12 +69,14 @@ type modelQueryResult struct {
 }
 
 func New(cfg config.Config, repo *store.Store) *Service {
+	remyAgent, _ := agentruntime.NewRemyAgent(cfg)
 	return &Service{
 		cfg:   cfg,
 		store: repo,
 		client: &http.Client{
 			Timeout: 45 * time.Second,
 		},
+		agent: remyAgent,
 	}
 }
 
@@ -99,14 +106,14 @@ func (s *Service) Handle(ctx context.Context, req Request) (Response, error) {
 	case looksLikeItemAdd(lower):
 		return s.proposeItem(ctx, message, categories)
 	default:
-		return Response{
+		return withEvents(Response{
 			State:   "completed",
 			Summary: "I can help create a tracking category, add an item, or list items in a category.",
 			Components: []Component{{
 				Type: "text",
 				Data: "Try requests like \"I want to track my LEGO sets\", \"Add Super Mario Bros. Wonder for Nintendo Switch\", or \"Show me my video games.\"",
 			}},
-		}, nil
+		}), nil
 	}
 }
 
@@ -125,26 +132,26 @@ func (s *Service) proposeCategory(ctx context.Context, message string) (Response
 		return Response{}, err
 	}
 
-	return Response{
+	return withEvents(Response{
 		State:   "proposing",
 		Summary: "Review this category before it is added.",
 		Components: []Component{{
 			Type: "category_proposal",
 			Data: proposal,
 		}},
-	}, nil
+	}), nil
 }
 
 func (s *Service) proposeItem(ctx context.Context, message string, categories []store.Category) (Response, error) {
 	if len(categories) == 0 {
-		return Response{
+		return withEvents(Response{
 			State:   "completed",
 			Summary: "Create a category first so I know what kind of item to add.",
 			Components: []Component{{
 				Type: "text",
 				Data: "For example: \"I want to track my video games.\"",
 			}},
-		}, nil
+		}), nil
 	}
 
 	draft, err := s.itemDraft(ctx, message, categories)
@@ -157,14 +164,14 @@ func (s *Service) proposeItem(ctx context.Context, message string, categories []
 		category = bestCategoryMatch(message, categories)
 	}
 	if category == nil {
-		return Response{
+		return withEvents(Response{
 			State:   "completed",
 			Summary: "I could not confidently choose a category for that item.",
 			Components: []Component{{
 				Type: "category_list",
 				Data: categories,
 			}},
-		}, nil
+		}), nil
 	}
 
 	items, err := s.store.ListItems(ctx, category.ID, 200, 0)
@@ -187,24 +194,24 @@ func (s *Service) proposeItem(ctx context.Context, message string, categories []
 		if err != nil {
 			return Response{}, err
 		}
-		return Response{
+		return withEvents(Response{
 			State:   "proposing",
 			Summary: "This looks like something already in inventory. Review the quantity change before it is committed.",
 			Components: []Component{
 				{Type: "query_result", Data: duplicate},
 				{Type: "item_proposal", Data: proposal},
 			},
-		}, nil
+		}), nil
 	}
 	if duplicate.Judgment == "uncertain" && len(duplicate.Matches) > 0 {
-		return Response{
+		return withEvents(Response{
 			State:   "completed",
 			Summary: "I found possible matches. Review them before deciding whether this should be added as a new item.",
 			Components: []Component{{
 				Type: "query_result",
 				Data: duplicate,
 			}},
-		}, nil
+		}), nil
 	}
 
 	proposal, err := s.store.CreateItemProposal(ctx, store.ItemProposalPayload{
@@ -218,27 +225,27 @@ func (s *Service) proposeItem(ctx context.Context, message string, categories []
 		return Response{}, err
 	}
 
-	return Response{
+	return withEvents(Response{
 		State:   "proposing",
 		Summary: "Review this item before it is added.",
 		Components: []Component{{
 			Type: "item_proposal",
 			Data: proposal,
 		}},
-	}, nil
+	}), nil
 }
 
 func (s *Service) listItems(ctx context.Context, message string, categories []store.Category) (Response, error) {
 	category := bestCategoryMatch(message, categories)
 	if category == nil {
-		return Response{
+		return withEvents(Response{
 			State:   "completed",
 			Summary: "Choose a category to list.",
 			Components: []Component{{
 				Type: "category_list",
 				Data: categories,
 			}},
-		}, nil
+		}), nil
 	}
 
 	items, err := s.store.ListItems(ctx, category.ID, 50, 0)
@@ -246,7 +253,7 @@ func (s *Service) listItems(ctx context.Context, message string, categories []st
 		return Response{}, err
 	}
 
-	return Response{
+	return withEvents(Response{
 		State:   "completed",
 		Summary: fmt.Sprintf("Found %d item(s) in %s.", len(items), category.Name),
 		Components: []Component{{
@@ -256,7 +263,7 @@ func (s *Service) listItems(ctx context.Context, message string, categories []st
 				"items":    items,
 			},
 		}},
-	}, nil
+	}), nil
 }
 
 func (s *Service) QueryInventory(ctx context.Context, message string, categoryID string) (QueryResult, error) {
@@ -302,14 +309,14 @@ func (s *Service) queryInventory(ctx context.Context, message string, categories
 		return Response{}, err
 	}
 
-	return Response{
+	return withEvents(Response{
 		State:   "completed",
 		Summary: result.Summary,
 		Components: []Component{{
 			Type: "query_result",
 			Data: result,
 		}},
-	}, nil
+	}), nil
 }
 
 func (s *Service) categoryDraft(ctx context.Context, message string) (categoryDraft, error) {
@@ -470,6 +477,18 @@ func (s *Service) completeJSON(ctx context.Context, system, user string, target 
 
 func (s *Service) modelConfigured() bool {
 	return s.cfg.OpenAIBaseURL != "" && s.cfg.OpenAIModel != ""
+}
+
+func withEvents(response Response) Response {
+	components := make([]agui.Component, 0, len(response.Components))
+	for _, component := range response.Components {
+		components = append(components, agui.Component{
+			Type: component.Type,
+			Data: component.Data,
+		})
+	}
+	response.Events = agui.EventsFor(response.State, response.Summary, components)
+	return response
 }
 
 func looksLikeCategoryRequest(message string, categories []store.Category) bool {
