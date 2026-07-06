@@ -1,4 +1,4 @@
-name: invdex
+name: remventory
 default_branch: main
 config:
   description: "A personal inventory system powered by LLMs to aid in searching and inventorying."

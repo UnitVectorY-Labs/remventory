@@ -1,12 +1,12 @@
 
-# Commands for invdex
+# Commands for remventory
 default:
   @just --list
-# Build invdex with Go
+# Build remventory with Go
 build:
   go build ./...
 
-# Run tests for invdex with Go
+# Run tests for remventory with Go
 test:
   go clean -testcache
   go test ./...

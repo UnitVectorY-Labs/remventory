@@ -17,6 +17,6 @@ func main() {
 		}
 	}
 
-	fmt.Printf("invdex %s\n", Version)
+	fmt.Printf("remventory %s\n", Version)
 	fmt.Println("A personal inventory system powered by LLMs.")
 }
