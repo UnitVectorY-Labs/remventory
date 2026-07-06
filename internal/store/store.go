@@ -183,7 +183,7 @@ func (s *Store) EnsureDefaultUser(ctx context.Context, displayName string) error
 }
 
 func (s *Store) ListCategories(ctx context.Context, limit, offset int) ([]Category, error) {
-	rows, err := s.pool.Query(ctx, `select id, user_id, name, coalesce(description, ''), created_at, updated_at
+	rows, err := s.pool.Query(ctx, `select id, user_id, name, coalesce(description, '') as description, created_at, updated_at
 		from categories
 		order by lower(name), created_at
 		limit $1 offset $2`, limit, offset)

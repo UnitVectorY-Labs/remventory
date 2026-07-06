@@ -1,6 +1,6 @@
 # Usage
 
-Remventory currently starts as a Go web server with health, readiness, configuration, category, item, and proposal endpoints. The Remy UI, MCP tools, and agent flows will build on this foundation.
+Remventory starts as a Go web server with a Remy-centered web UI, health and readiness checks, category/item/proposal endpoints, and an MCP endpoint.
 
 ## Run Locally
 
@@ -14,6 +14,12 @@ go run .
 ```
 
 The server listens on `:8080` unless `REMVENTORY_HTTP_ADDR` is set.
+
+Open the web UI:
+
+```text
+http://localhost:8080/
+```
 
 ## Check the Server
 
@@ -33,6 +39,16 @@ When `REMVENTORY_ACCESS_TOKEN` is set:
 ```sh
 curl -H "Authorization: Bearer $REMVENTORY_ACCESS_TOKEN" http://localhost:8080/api/categories
 ```
+
+## MCP
+
+MCP clients can connect to the streamable HTTP endpoint:
+
+```text
+http://localhost:8080/mcp
+```
+
+The initial tool surface includes Remy requests, category reads, item listing, and proposal confirmation. Data-changing requests still produce proposals first.
 
 ## Prototype Proposal Flow
 

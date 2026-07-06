@@ -1,21 +1,29 @@
 package httpapi
 
 import (
+	"embed"
 	"encoding/json"
 	"errors"
+	"io/fs"
 	"log/slog"
 	"net/http"
 	"strconv"
 
 	"github.com/UnitVectorY-Labs/remventory/internal/config"
+	"github.com/UnitVectorY-Labs/remventory/internal/remy"
 	"github.com/UnitVectorY-Labs/remventory/internal/store"
 )
 
+//go:embed static/*
+var staticFiles embed.FS
+
 type Options struct {
-	Config  config.Config
-	Store   *store.Store
-	Version string
-	Logger  *slog.Logger
+	Config     config.Config
+	Store      *store.Store
+	Remy       *remy.Service
+	MCPHandler http.Handler
+	Version    string
+	Logger     *slog.Logger
 }
 
 func New(opts Options) http.Handler {
@@ -23,13 +31,21 @@ func New(opts Options) http.Handler {
 	api := api{
 		cfg:     opts.Config,
 		store:   opts.Store,
+		remy:    opts.Remy,
 		version: opts.Version,
 		logger:  opts.Logger,
 	}
 
 	mux.HandleFunc("GET /healthz", api.health)
 	mux.HandleFunc("GET /readyz", api.ready)
+	mux.HandleFunc("GET /{$}", api.index)
+	mux.Handle("GET /static/", http.StripPrefix("/static/", http.FileServerFS(staticFS())))
+	if opts.MCPHandler != nil {
+		mux.Handle("/mcp", opts.MCPHandler)
+		mux.Handle("/mcp/", opts.MCPHandler)
+	}
 	mux.HandleFunc("GET /api/config", api.withToken(api.configStatus))
+	mux.HandleFunc("POST /api/remy/request", api.withToken(api.remyRequest))
 	mux.HandleFunc("GET /api/categories", api.withToken(api.listCategories))
 	mux.HandleFunc("GET /api/categories/{id}", api.withToken(api.getCategory))
 	mux.HandleFunc("GET /api/items", api.withToken(api.listItems))
@@ -44,8 +60,17 @@ func New(opts Options) http.Handler {
 type api struct {
 	cfg     config.Config
 	store   *store.Store
+	remy    *remy.Service
 	version string
 	logger  *slog.Logger
+}
+
+func staticFS() fs.FS {
+	fsys, err := fs.Sub(staticFiles, "static")
+	if err != nil {
+		panic(err)
+	}
+	return fsys
 }
 
 func (a api) health(w http.ResponseWriter, r *http.Request) {
@@ -88,6 +113,34 @@ func (a api) configStatus(w http.ResponseWriter, r *http.Request) {
 		"version": a.version,
 		"config":  a.cfg.PublicStatus(),
 	})
+}
+
+func (a api) index(w http.ResponseWriter, r *http.Request) {
+	if r.URL.Path != "/" {
+		http.NotFound(w, r)
+		return
+	}
+	http.ServeFileFS(w, r, staticFS(), "index.html")
+}
+
+func (a api) remyRequest(w http.ResponseWriter, r *http.Request) {
+	if a.remy == nil {
+		writeError(w, http.StatusServiceUnavailable, "remy is not configured")
+		return
+	}
+
+	var payload remy.Request
+	if !decodeJSON(w, r, &payload) {
+		return
+	}
+
+	response, err := a.remy.Handle(r.Context(), payload)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	writeJSON(w, http.StatusOK, response)
 }
 
 func (a api) listCategories(w http.ResponseWriter, r *http.Request) {

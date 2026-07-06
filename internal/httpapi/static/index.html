@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Remventory</title>
+    <link rel="stylesheet" href="/static/styles.css">
+  </head>
+  <body>
+    <main class="shell">
+      <section class="workspace" aria-live="polite">
+        <header class="topbar">
+          <div>
+            <p class="eyebrow">Remventory</p>
+            <h1>Remy</h1>
+          </div>
+          <div id="state" class="state">Ready</div>
+        </header>
+
+        <section id="stage" class="stage">
+          <div class="empty">
+            <h2>What are we inventorying?</h2>
+            <p>Try “I want to track my LEGO sets”, then approve the category and add an item.</p>
+          </div>
+        </section>
+
+        <form id="remy-form" class="composer">
+          <input id="message" name="message" autocomplete="off" placeholder="Ask Remy to track, add, or show inventory" required>
+          <button type="submit">Send</button>
+        </form>
+      </section>
+    </main>
+    <script src="/static/app.js"></script>
+  </body>
+</html>

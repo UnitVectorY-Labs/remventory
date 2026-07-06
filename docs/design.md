@@ -40,12 +40,13 @@ The MCP server is the stable tool surface for Remventory. Remy and remote MCP cl
 
 ## Current Prototype Surface
 
-Before the Remy UI and MCP server are complete, the HTTP API can exercise the same core proposal behavior:
+The current web UI and HTTP API can exercise the same core proposal behavior:
 
+- Send a request to Remy.
 - Create category proposals.
 - Approve or reject proposals.
 - Read category definitions.
 - Create item proposals.
 - List items by category.
 
-This is a testing surface for the prototype loop, not the intended final primary user experience.
+The MCP endpoint exposes the same early tool boundary for remote clients.

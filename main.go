@@ -14,7 +14,10 @@ import (
 
 	"github.com/UnitVectorY-Labs/remventory/internal/config"
 	"github.com/UnitVectorY-Labs/remventory/internal/httpapi"
+	"github.com/UnitVectorY-Labs/remventory/internal/mcpserver"
+	"github.com/UnitVectorY-Labs/remventory/internal/remy"
 	"github.com/UnitVectorY-Labs/remventory/internal/store"
+	mcptransport "github.com/mark3labs/mcp-go/server"
 )
 
 // Version is the application version, injected at build time via ldflags.
@@ -62,11 +65,19 @@ func run() error {
 		logger.Warn("DATABASE_URL is not set; database-backed routes will report unavailable")
 	}
 
+	remyService := remy.New(cfg, repo)
+	var mcpHandler http.Handler
+	if repo != nil {
+		mcpHandler = mcptransport.NewStreamableHTTPServer(mcpserver.New(Version, repo, remyService))
+	}
+
 	api := httpapi.New(httpapi.Options{
-		Config:  cfg,
-		Store:   repo,
-		Version: Version,
-		Logger:  logger,
+		Config:     cfg,
+		Store:      repo,
+		Remy:       remyService,
+		MCPHandler: mcpHandler,
+		Version:    Version,
+		Logger:     logger,
 	})
 
 	server := &http.Server{
