@@ -28,6 +28,14 @@
           <input id="message" name="message" autocomplete="off" placeholder="Ask Remy to track, add, or show inventory" required>
           <button type="submit">Send</button>
         </form>
+
+        <section id="processing" class="processing" aria-live="polite" hidden>
+          <div>
+            <p class="eyebrow">Remy is working</p>
+            <p id="processing-message" class="processing-message"></p>
+          </div>
+          <button id="stop-request" class="danger" type="button">Stop</button>
+        </section>
       </section>
     </main>
     <script src="/static/app.js"></script>

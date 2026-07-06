@@ -45,6 +45,7 @@ textarea {
 
 .topbar,
 .composer,
+.processing,
 .card,
 .empty {
   background: var(--panel);
@@ -160,6 +161,49 @@ h3 {
   padding: 10px;
 }
 
+.processing {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 12px;
+  align-items: center;
+  padding: 14px 16px;
+  border-color: color-mix(in srgb, var(--accent), var(--line) 50%);
+}
+
+.processing[hidden],
+.composer[hidden] {
+  display: none;
+}
+
+.processing-message {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.processing-message::after {
+  content: "";
+  display: inline-block;
+  width: 1.4em;
+  text-align: left;
+  animation: dots 1.2s steps(4, end) infinite;
+}
+
+@keyframes dots {
+  0% {
+    content: "";
+  }
+  25% {
+    content: ".";
+  }
+  50% {
+    content: "..";
+  }
+  75%,
+  100% {
+    content: "...";
+  }
+}
+
 .composer input {
   min-width: 0;
   border: 1px solid var(--line);
@@ -216,6 +260,10 @@ pre {
   }
 
   .composer {
+    grid-template-columns: 1fr;
+  }
+
+  .processing {
     grid-template-columns: 1fr;
   }
 }

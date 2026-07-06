@@ -2,6 +2,11 @@ const form = document.querySelector("#remy-form");
 const input = document.querySelector("#message");
 const stage = document.querySelector("#stage");
 const state = document.querySelector("#state");
+const processing = document.querySelector("#processing");
+const processingMessage = document.querySelector("#processing-message");
+const stopRequest = document.querySelector("#stop-request");
+let activeController = null;
+let activeMessage = "";
 
 form.addEventListener("submit", async (event) => {
   event.preventDefault();
@@ -11,6 +16,14 @@ form.addEventListener("submit", async (event) => {
   await askRemy(message);
 });
 
+stopRequest.addEventListener("click", () => {
+  if (!activeController) return;
+  setState("Stopping");
+  stopRequest.disabled = true;
+  processingMessage.textContent = "Stopping request";
+  activeController.abort();
+});
+
 const initialMessage = new URLSearchParams(window.location.search).get("message");
 if (initialMessage) {
   input.value = initialMessage;
@@ -18,16 +31,28 @@ if (initialMessage) {
 }
 
 async function askRemy(message) {
-  setState("Thinking");
+  if (activeController) {
+    activeController.abort();
+  }
+  activeController = new AbortController();
+  activeMessage = message;
+  setWorking(message);
   stage.innerHTML = "";
   try {
     const response = await api("/api/remy/request", {
       method: "POST",
       body: JSON.stringify({ message }),
+      signal: activeController.signal,
     });
     renderResponse(response);
   } catch (error) {
-    renderError(error);
+    if (error.name === "AbortError") {
+      renderStopped();
+    } else {
+      renderError(error);
+    }
+  } finally {
+    clearWorking();
   }
 }
 
@@ -230,8 +255,31 @@ function renderError(error) {
   stage.append(textCard(error.message));
 }
 
+function renderStopped() {
+  setState("Stopped");
+  stage.innerHTML = "";
+  stage.append(textCard("Stopped before Remy finished."));
+  input.value = activeMessage;
+}
+
 function setState(value) {
   state.textContent = value;
+}
+
+function setWorking(message) {
+  setState("Working");
+  form.hidden = true;
+  processing.hidden = false;
+  stopRequest.disabled = false;
+  processingMessage.textContent = message;
+}
+
+function clearWorking() {
+  activeController = null;
+  stopRequest.disabled = false;
+  processing.hidden = true;
+  form.hidden = false;
+  input.focus();
 }
 
 function labelState(value) {
