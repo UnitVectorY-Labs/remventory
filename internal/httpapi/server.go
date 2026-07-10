@@ -96,6 +96,11 @@ func (a api) ready(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, status, body)
 		return
 	}
+	if a.cfg.MainModel == "" || a.cfg.ThinkingModel == "" {
+		status = http.StatusServiceUnavailable
+		body["status"] = "not_ready"
+		body["model"] = "main_or_thinking_not_configured"
+	}
 
 	if err := a.store.Ping(r.Context()); err != nil {
 		status = http.StatusServiceUnavailable

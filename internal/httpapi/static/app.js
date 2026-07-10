@@ -5,8 +5,13 @@ const state = document.querySelector("#state");
 const processing = document.querySelector("#processing");
 const processingMessage = document.querySelector("#processing-message");
 const stopRequest = document.querySelector("#stop-request");
+const configurationWarning = document.querySelector("#configuration-warning");
+const remyAvatar = document.querySelector("#remy-avatar");
 let activeController = null;
 let activeMessage = "";
+let currentResponse = null;
+
+showConfigurationStatus();
 
 form.addEventListener("submit", async (event) => {
   event.preventDefault();
@@ -36,12 +41,12 @@ async function askRemy(message) {
   }
   activeController = new AbortController();
   activeMessage = message;
+  const context = visibleContext(currentResponse);
   setWorking(message);
-  stage.innerHTML = "";
   try {
     const response = await api("/api/remy/request", {
       method: "POST",
-      body: JSON.stringify({ message }),
+      body: JSON.stringify({ message, context }),
       signal: activeController.signal,
     });
     renderResponse(response);
@@ -68,9 +73,29 @@ async function api(path, options = {}) {
   return body;
 }
 
+async function showConfigurationStatus() {
+  try {
+    const status = await api("/api/config");
+    if (!status.config?.model_configured) {
+      configurationWarning.hidden = false;
+      configurationWarning.textContent = "Remy needs OPENAI_MAIN_MODEL and OPENAI_THINKING_MODEL before requests can use the full agent workflow.";
+    }
+  } catch (_) {
+    // Request failures are shown when the user submits; do not block the composer.
+  }
+}
+
 function renderResponse(response) {
+  currentResponse = response;
   setState(labelState(response.state));
+  setRemyImage(response.state === "proposing" ? "cataloging" : "celebrating");
   stage.innerHTML = "";
+  if (response.request_summary) {
+    const requestSummary = document.createElement("p");
+    requestSummary.className = "request-summary";
+    requestSummary.textContent = response.request_summary;
+    stage.append(requestSummary);
+  }
   if (response.summary) {
     const summary = document.createElement("p");
     summary.className = "summary";
@@ -80,6 +105,16 @@ function renderResponse(response) {
   for (const component of response.components || []) {
     stage.append(renderComponent(component));
   }
+}
+
+function visibleContext(response) {
+  if (!response) return null;
+  return {
+    state: response.state,
+    summary: response.summary,
+    request_summary: response.request_summary,
+    components: response.components || [],
+  };
 }
 
 function renderComponent(component) {
@@ -251,12 +286,14 @@ function field(label, value) {
 
 function renderError(error) {
   setState("Error");
+  setRemyImage("error");
   stage.innerHTML = "";
   stage.append(textCard(error.message));
 }
 
 function renderStopped() {
   setState("Stopped");
+  setRemyImage("ready");
   stage.innerHTML = "";
   stage.append(textCard("Stopped before Remy finished."));
   input.value = activeMessage;
@@ -268,6 +305,8 @@ function setState(value) {
 
 function setWorking(message) {
   setState("Working");
+  const lower = message.toLowerCase();
+  setRemyImage(lower.includes("show") || lower.includes("list") || lower.includes("have") ? "searching" : "thinking");
   form.hidden = true;
   processing.hidden = false;
   stopRequest.disabled = false;
@@ -280,6 +319,19 @@ function clearWorking() {
   processing.hidden = true;
   form.hidden = false;
   input.focus();
+}
+
+function setRemyImage(stateName) {
+  const labels = {
+    ready: "Remy the hamster librarian is ready",
+    thinking: "Remy the hamster librarian is thinking",
+    searching: "Remy the hamster librarian is searching the catalog",
+    cataloging: "Remy the hamster librarian is preparing an inventory proposal",
+    celebrating: "Remy the hamster librarian completed the request",
+    error: "Remy the hamster librarian needs help",
+  };
+  remyAvatar.src = `/static/remy-${stateName}.svg`;
+  remyAvatar.alt = labels[stateName] || labels.ready;
 }
 
 function labelState(value) {

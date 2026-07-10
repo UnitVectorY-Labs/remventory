@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 240 240" role="img" aria-labelledby="title desc">
+  <title id="title">Remy thinking</title><desc id="desc">A hamster librarian thinking with a pencil and notes.</desc>
+  <rect width="240" height="240" rx="36" fill="#f5f1e8"/>
+  <circle cx="73" cy="67" r="29" fill="#c9824b" stroke="#593a2b" stroke-width="6"/><circle cx="167" cy="67" r="29" fill="#c9824b" stroke="#593a2b" stroke-width="6"/>
+  <circle cx="73" cy="67" r="15" fill="#f2b99a"/><circle cx="167" cy="67" r="15" fill="#f2b99a"/>
+  <ellipse cx="120" cy="126" rx="77" ry="78" fill="#d99459" stroke="#593a2b" stroke-width="7"/><ellipse cx="120" cy="145" rx="52" ry="47" fill="#f1c397"/>
+  <path d="M82 107q10-8 20 0m36 0q10-8 20 0" fill="none" stroke="#28221f" stroke-width="6" stroke-linecap="round"/>
+  <path d="M109 130 Q120 140 131 130 Q120 119 109 130Z" fill="#8e4d45"/><path d="M120 139q8 8 18 2" fill="none" stroke="#593a2b" stroke-width="4" stroke-linecap="round"/>
+  <path d="M82 129H48m36 12H43m115-12h34m-36 12h41" stroke="#593a2b" stroke-width="3" stroke-linecap="round"/>
+  <rect x="58" y="178" width="112" height="43" rx="5" fill="#fffdf6" stroke="#76654c" stroke-width="5"/><path d="M73 191h57m-57 12h43" stroke="#9a8b70" stroke-width="4" stroke-linecap="round"/>
+  <path d="M154 193l32-42" stroke="#d9a42c" stroke-width="9" stroke-linecap="round"/><path d="M185 151l7-9" stroke="#593a2b" stroke-width="9" stroke-linecap="round"/>
+  <circle cx="196" cy="51" r="6" fill="#2f765e"/><circle cx="213" cy="34" r="10" fill="#2f765e" opacity=".75"/>
+</svg>

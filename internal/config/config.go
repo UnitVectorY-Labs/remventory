@@ -12,7 +12,9 @@ type Config struct {
 	DatabaseURL     string
 	OpenAIBaseURL   string
 	OpenAIAPIKey    string
-	OpenAIModel     string
+	TinyModel       string
+	MainModel       string
+	ThinkingModel   string
 	AccessToken     string
 	DefaultUserName string
 	AutoMigrate     bool
@@ -25,7 +27,9 @@ func Load() Config {
 		DatabaseURL:     env("DATABASE_URL", ""),
 		OpenAIBaseURL:   env("OPENAI_BASE_URL", "http://localhost:11434/v1"),
 		OpenAIAPIKey:    env("OPENAI_API_KEY", ""),
-		OpenAIModel:     env("OPENAI_MODEL", ""),
+		TinyModel:       env("OPENAI_TINY_MODEL", ""),
+		MainModel:       env("OPENAI_MAIN_MODEL", env("OPENAI_MODEL", "")),
+		ThinkingModel:   env("OPENAI_THINKING_MODEL", env("OPENAI_MODEL", "")),
 		AccessToken:     env("REMVENTORY_ACCESS_TOKEN", ""),
 		DefaultUserName: env("REMVENTORY_DEFAULT_USER_NAME", "Remventory User"),
 		AutoMigrate:     envBool("REMVENTORY_AUTO_MIGRATE", true),
@@ -35,12 +39,15 @@ func Load() Config {
 
 func (c Config) PublicStatus() map[string]any {
 	return map[string]any{
-		"http_addr":           c.HTTPAddr,
-		"database_configured": c.DatabaseURL != "",
-		"model_configured":    c.OpenAIModel != "",
-		"openai_base_url":     c.OpenAIBaseURL,
-		"access_token_gate":   c.AccessToken != "",
-		"auto_migrate":        c.AutoMigrate,
+		"http_addr":                 c.HTTPAddr,
+		"database_configured":       c.DatabaseURL != "",
+		"model_configured":          c.MainModel != "" && c.ThinkingModel != "",
+		"tiny_model_configured":     c.TinyModel != "",
+		"main_model_configured":     c.MainModel != "",
+		"thinking_model_configured": c.ThinkingModel != "",
+		"openai_base_url":           c.OpenAIBaseURL,
+		"access_token_gate":         c.AccessToken != "",
+		"auto_migrate":              c.AutoMigrate,
 	}
 }
 

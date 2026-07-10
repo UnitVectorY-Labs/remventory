@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 240 240" role="img" aria-labelledby="title desc">
+  <title id="title">Remy cataloging</title><desc id="desc">A hamster librarian filing an inventory card.</desc>
+  <rect width="240" height="240" rx="36" fill="#f1edf7"/>
+  <circle cx="73" cy="65" r="29" fill="#c9824b" stroke="#593a2b" stroke-width="6"/><circle cx="167" cy="65" r="29" fill="#c9824b" stroke="#593a2b" stroke-width="6"/><circle cx="73" cy="65" r="15" fill="#f2b99a"/><circle cx="167" cy="65" r="15" fill="#f2b99a"/>
+  <ellipse cx="120" cy="121" rx="77" ry="77" fill="#d99459" stroke="#593a2b" stroke-width="7"/><ellipse cx="120" cy="140" rx="52" ry="47" fill="#f1c397"/>
+  <circle cx="91" cy="105" r="8" fill="#28221f"/><circle cx="149" cy="105" r="8" fill="#28221f"/><path d="M109 125 Q120 135 131 125 Q120 114 109 125Z" fill="#8e4d45"/>
+  <path d="M120 134v9m0 0q-11 11-22 1m22-1q11 11 22 1" fill="none" stroke="#593a2b" stroke-width="4" stroke-linecap="round"/>
+  <path d="M82 125H48m36 12H43m115-12h34m-36 12h41" stroke="#593a2b" stroke-width="3" stroke-linecap="round"/>
+  <rect x="45" y="174" width="150" height="50" rx="7" fill="#6d548f" stroke="#44365c" stroke-width="6"/><rect x="82" y="163" width="76" height="44" rx="4" fill="#fffdf6" stroke="#76654c" stroke-width="5"/>
+  <path d="M96 177h46m-46 12h31" stroke="#9a8b70" stroke-width="4" stroke-linecap="round"/><rect x="91" y="211" width="58" height="7" rx="3" fill="#d6c9e8"/>
+</svg>

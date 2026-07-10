@@ -8,3 +8,6 @@ config:
   justfile: true
   release_github: false
   status: wip
+  gitignore:
+  - .env
+

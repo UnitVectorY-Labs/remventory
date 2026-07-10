@@ -128,3 +128,6 @@ go.work
 ## Universal Ignore Patterns
 
 *.log
+
+## Additional Ignore Patterns
+.env

@@ -13,8 +13,8 @@ Use category definitions as context, keep item attributes structured, and never 
 
 func NewRemyAgent(cfg config.Config) (agent.Agent, error) {
 	description := "Interprets inventory requests and produces structured proposal, query, and list results."
-	if cfg.OpenAIModel != "" {
-		description += " Configured model: " + cfg.OpenAIModel + "."
+	if cfg.MainModel != "" {
+		description += " Configured main model: " + cfg.MainModel + "."
 	}
 	return agent.New(agent.Config{
 		Name:        "remy",

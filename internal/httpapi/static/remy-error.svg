@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 240 240" role="img" aria-labelledby="title desc">
+  <title id="title">Remy needs help</title><desc id="desc">A concerned hamster librarian holding a misplaced catalog card.</desc>
+  <rect width="240" height="240" rx="36" fill="#faeeee"/>
+  <circle cx="73" cy="66" r="29" fill="#c9824b" stroke="#593a2b" stroke-width="6"/><circle cx="167" cy="66" r="29" fill="#c9824b" stroke="#593a2b" stroke-width="6"/><circle cx="73" cy="66" r="15" fill="#f2b99a"/><circle cx="167" cy="66" r="15" fill="#f2b99a"/>
+  <ellipse cx="120" cy="123" rx="77" ry="78" fill="#d99459" stroke="#593a2b" stroke-width="7"/><ellipse cx="120" cy="142" rx="52" ry="48" fill="#f1c397"/>
+  <path d="M81 108q10-9 20-3m38 0q10-6 20 3" fill="none" stroke="#28221f" stroke-width="6" stroke-linecap="round"/><circle cx="91" cy="111" r="6" fill="#28221f"/><circle cx="149" cy="111" r="6" fill="#28221f"/>
+  <path d="M109 128 Q120 138 131 128 Q120 117 109 128Z" fill="#8e4d45"/><path d="M102 151q18-13 36 0" fill="none" stroke="#593a2b" stroke-width="4" stroke-linecap="round"/>
+  <path d="M82 128H48m36 12H43m115-12h34m-36 12h41" stroke="#593a2b" stroke-width="3" stroke-linecap="round"/>
+  <rect x="73" y="177" width="94" height="44" rx="5" fill="#fffdf6" stroke="#9f2d3a" stroke-width="6"/><path d="M91 191h58m-58 13h37" stroke="#b78588" stroke-width="4" stroke-linecap="round"/><path d="M184 184v19m0 10v1" stroke="#9f2d3a" stroke-width="8" stroke-linecap="round"/>
+</svg>

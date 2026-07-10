@@ -315,6 +315,57 @@ func (s *Store) GetProposal(ctx context.Context, proposalID string) (Proposal, e
 	return proposal, err
 }
 
+func (s *Store) RevisePendingProposal(ctx context.Context, proposalID string, payload json.RawMessage) (Proposal, error) {
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return Proposal{}, err
+	}
+	defer tx.Rollback(ctx)
+
+	var proposal Proposal
+	err = scanProposal(tx.QueryRow(ctx, `select id, user_id, type, status, proposed_payload_jsonb, coalesce(reason, ''), created_at, decided_at
+		from proposals where id = $1 for update`, proposalID), &proposal)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return Proposal{}, ErrNotFound
+	}
+	if err != nil {
+		return Proposal{}, err
+	}
+	if proposal.Status != "pending" {
+		return Proposal{}, errors.New("only pending proposals can be revised")
+	}
+	if !json.Valid(payload) {
+		return Proposal{}, errors.New("revised proposal payload must be valid JSON")
+	}
+
+	switch proposal.Type {
+	case "category_create":
+		var revised CategoryProposalPayload
+		if err := json.Unmarshal(payload, &revised); err != nil || revised.Name == "" || len(revised.Attributes) == 0 {
+			return Proposal{}, errors.New("revised category proposal requires a name and attributes")
+		}
+	case "item_change":
+		var revised ItemProposalPayload
+		if err := json.Unmarshal(payload, &revised); err != nil || revised.CategoryID == "" || revised.Title == "" {
+			return Proposal{}, errors.New("revised item proposal requires category_id and title")
+		}
+	default:
+		return Proposal{}, fmt.Errorf("unsupported proposal type %q", proposal.Type)
+	}
+
+	err = scanProposal(tx.QueryRow(ctx, `update proposals set proposed_payload_jsonb = $2::jsonb
+		where id = $1
+		returning id, user_id, type, status, proposed_payload_jsonb, coalesce(reason, ''), created_at, decided_at`,
+		proposalID, string(payload)), &proposal)
+	if err != nil {
+		return Proposal{}, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return Proposal{}, err
+	}
+	return proposal, nil
+}
+
 func (s *Store) DecideProposal(ctx context.Context, proposalID string, decision ProposalDecision) (Proposal, error) {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {

@@ -9,7 +9,9 @@ Start Postgres, then run:
 ```sh
 export DATABASE_URL='postgres://remventory:remventory@localhost:5432/remventory?sslmode=disable'
 export OPENAI_BASE_URL='http://localhost:11434/v1'
-export OPENAI_MODEL='llama3.1'
+export OPENAI_TINY_MODEL='small-instruct-model'
+export OPENAI_MAIN_MODEL='general-instruct-model'
+export OPENAI_THINKING_MODEL='reasoning-model'
 go run .
 ```
 

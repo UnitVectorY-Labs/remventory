@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 240 240" role="img" aria-labelledby="title desc">
+  <title id="title">Remy searching</title><desc id="desc">A hamster librarian searching the catalog with a magnifying glass.</desc>
+  <rect width="240" height="240" rx="36" fill="#eaf2f5"/>
+  <circle cx="73" cy="66" r="29" fill="#c9824b" stroke="#593a2b" stroke-width="6"/><circle cx="167" cy="66" r="29" fill="#c9824b" stroke="#593a2b" stroke-width="6"/><circle cx="73" cy="66" r="15" fill="#f2b99a"/><circle cx="167" cy="66" r="15" fill="#f2b99a"/>
+  <ellipse cx="120" cy="123" rx="77" ry="78" fill="#d99459" stroke="#593a2b" stroke-width="7"/><ellipse cx="120" cy="142" rx="52" ry="48" fill="#f1c397"/>
+  <circle cx="90" cy="108" r="8" fill="#28221f"/><circle cx="149" cy="108" r="8" fill="#28221f"/><path d="M109 127 Q120 137 131 127 Q120 116 109 127Z" fill="#8e4d45"/>
+  <path d="M120 136v9m0 0q-11 10-22 1m22-1q11 10 22 1" fill="none" stroke="#593a2b" stroke-width="4" stroke-linecap="round"/>
+  <path d="M82 127H48m36 12H43m115-12h34m-36 12h41" stroke="#593a2b" stroke-width="3" stroke-linecap="round"/>
+  <circle cx="169" cy="164" r="31" fill="#b9dce8" fill-opacity=".42" stroke="#244f61" stroke-width="8"/><path d="M190 188l27 30" stroke="#244f61" stroke-width="12" stroke-linecap="round"/>
+  <path d="M72 181q-17 7-14 28" fill="none" stroke="#593a2b" stroke-width="8" stroke-linecap="round"/><rect x="68" y="181" width="66" height="39" rx="4" fill="#2f765e" stroke="#24483c" stroke-width="5"/>
+</svg>

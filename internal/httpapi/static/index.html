@@ -10,12 +10,18 @@
     <main class="shell">
       <section class="workspace" aria-live="polite">
         <header class="topbar">
-          <div>
+          <div class="identity">
+            <img id="remy-avatar" class="remy-avatar" src="/static/remy-ready.svg" alt="Remy the hamster librarian is ready">
+            <div>
             <p class="eyebrow">Remventory</p>
             <h1>Remy</h1>
+            <p class="tagline">Your inventory librarian</p>
+            </div>
           </div>
           <div id="state" class="state">Ready</div>
         </header>
+
+		<section id="configuration-warning" class="configuration-warning" hidden></section>
 
         <section id="stage" class="stage">
           <div class="empty">

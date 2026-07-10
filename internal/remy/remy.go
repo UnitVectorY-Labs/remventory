@@ -25,14 +25,23 @@ type Service struct {
 }
 
 type Request struct {
-	Message string `json:"message"`
+	Message string          `json:"message"`
+	Context *VisibleContext `json:"context,omitempty"`
 }
 
 type Response struct {
-	State      string       `json:"state"`
-	Summary    string       `json:"summary"`
-	Components []Component  `json:"components"`
-	Events     []agui.Event `json:"events,omitempty"`
+	State          string       `json:"state"`
+	Summary        string       `json:"summary"`
+	RequestSummary string       `json:"request_summary,omitempty"`
+	Components     []Component  `json:"components"`
+	Events         []agui.Event `json:"events,omitempty"`
+}
+
+type VisibleContext struct {
+	State          string      `json:"state,omitempty"`
+	Summary        string      `json:"summary,omitempty"`
+	RequestSummary string      `json:"request_summary,omitempty"`
+	Components     []Component `json:"components,omitempty"`
 }
 
 type Component struct {
@@ -68,6 +77,28 @@ type modelQueryResult struct {
 	MatchedItemIDs []string `json:"matched_item_ids"`
 }
 
+type requestPlan struct {
+	Action string `json:"action"`
+}
+
+type categorySelection struct {
+	CategoryID string `json:"category_id"`
+}
+
+type proposalRevision struct {
+	ProposalID      string          `json:"proposal_id"`
+	Summary         string          `json:"summary"`
+	ProposedPayload json.RawMessage `json:"proposed_payload"`
+}
+
+type contextualAnswer struct {
+	Answer string `json:"answer"`
+}
+
+type requestSummary struct {
+	Summary string `json:"summary"`
+}
+
 func New(cfg config.Config, repo *store.Store) *Service {
 	remyAgent, _ := agentruntime.NewRemyAgent(cfg)
 	return &Service{
@@ -95,26 +126,164 @@ func (s *Service) Handle(ctx context.Context, req Request) (Response, error) {
 		return Response{}, err
 	}
 
-	lower := strings.ToLower(message)
-	switch {
-	case looksLikeCategoryRequest(lower, categories):
-		return s.proposeCategory(ctx, message)
-	case looksLikeExistenceQuery(lower):
-		return s.queryInventory(ctx, message, categories)
-	case looksLikeListRequest(lower):
-		return s.listItems(ctx, message, categories)
-	case looksLikeItemAdd(lower):
-		return s.proposeItem(ctx, message, categories)
+	action, err := s.planRequest(ctx, message, categories, req.Context)
+	if err != nil {
+		return Response{}, err
+	}
+	var response Response
+	switch action {
+	case "category_change":
+		response, err = s.proposeCategory(ctx, message)
+	case "query_inventory":
+		response, err = s.queryInventory(ctx, message, categories)
+	case "list_items":
+		response, err = s.listItems(ctx, message, categories)
+	case "item_change":
+		response, err = s.proposeItem(ctx, message, categories)
+	case "revise_proposal":
+		response, err = s.reviseProposal(ctx, message, req.Context)
+	case "answer_context":
+		response, err = s.answerContext(ctx, message, req.Context)
 	default:
-		return withEvents(Response{
+		response = withEvents(Response{
 			State:   "completed",
 			Summary: "I can help create a tracking category, add an item, or list items in a category.",
 			Components: []Component{{
 				Type: "text",
 				Data: "Try requests like \"I want to track my LEGO sets\", \"Add Super Mario Bros. Wonder for Nintendo Switch\", or \"Show me my video games.\"",
 			}},
-		}), nil
+		})
 	}
+	if err != nil {
+		return Response{}, err
+	}
+	response.RequestSummary = s.summarizeRequest(ctx, message)
+	return response, nil
+}
+
+func (s *Service) planRequest(ctx context.Context, message string, categories []store.Category, visible *VisibleContext) (string, error) {
+	if s.modelConfigured(s.cfg.MainModel) {
+		categoryBytes, _ := json.Marshal(categories)
+		contextBytes, _ := json.Marshal(visible)
+		var plan requestPlan
+		err := s.completeJSON(ctx, s.cfg.MainModel, `Classify the inventory request and return only JSON.
+Schema: {"action":"category_change|item_change|list_items|query_inventory|revise_proposal|answer_context|help"}
+Use category_change when the user wants to start tracking a kind of thing or change which attributes are tracked.
+Use item_change when the user wants to add, update, remove, or change the quantity of an inventory item.
+Use list_items when the user wants to browse or see inventory.
+Use query_inventory when the user asks whether a particular item is owned or present.
+Use revise_proposal when the visible context contains a pending proposal and the user asks to change or correct it.
+Use answer_context when the user asks a question about the visible result or proposal without requesting a data change.
+Available category definitions: `+string(categoryBytes)+`
+Currently visible interface: `+string(contextBytes), message, &plan)
+		if err != nil {
+			return "", fmt.Errorf("ask model to interpret request: %w", err)
+		}
+		switch plan.Action {
+		case "category_change", "item_change", "list_items", "query_inventory", "revise_proposal", "answer_context", "help":
+			return plan.Action, nil
+		default:
+			return "", fmt.Errorf("model returned unsupported action %q", plan.Action)
+		}
+	}
+
+	lower := strings.ToLower(message)
+	switch {
+	case looksLikeExistenceQuery(lower):
+		return "query_inventory", nil
+	case looksLikeListRequest(lower):
+		return "list_items", nil
+	case looksLikeItemAdd(lower):
+		return "item_change", nil
+	case looksLikeCategoryRequest(lower, categories):
+		return "category_change", nil
+	default:
+		return "help", nil
+	}
+}
+
+func (s *Service) reviseProposal(ctx context.Context, message string, visible *VisibleContext) (Response, error) {
+	proposal, componentType, err := pendingProposalFromContext(visible)
+	if err != nil {
+		return Response{}, err
+	}
+	stored, err := s.store.GetProposal(ctx, proposal.ID)
+	if err != nil {
+		return Response{}, err
+	}
+	if stored.Status != "pending" {
+		return Response{}, errors.New("the proposal on screen is no longer pending")
+	}
+
+	var revision proposalRevision
+	err = s.completeJSON(ctx, s.cfg.ThinkingModel, `Revise the pending inventory proposal according to the user's follow-up request.
+Return only JSON with schema:
+{"proposal_id":"string","summary":"brief description of what changed","proposed_payload":{}}
+proposal_id must remain unchanged. proposed_payload must be the complete revised payload, preserving every unchanged field and using the same schema as the current payload.
+Current proposal: `+mustJSON(stored), message, &revision)
+	if err != nil {
+		return Response{}, fmt.Errorf("ask model to revise proposal: %w", err)
+	}
+	if revision.ProposalID != stored.ID {
+		return Response{}, errors.New("model did not preserve the proposal id")
+	}
+	revised, err := s.store.RevisePendingProposal(ctx, stored.ID, revision.ProposedPayload)
+	if err != nil {
+		return Response{}, err
+	}
+	if revision.Summary == "" {
+		revision.Summary = "I revised the proposal. Review it before approving."
+	}
+	return withEvents(Response{State: "proposing", Summary: revision.Summary, Components: []Component{{Type: componentType, Data: revised}}}), nil
+}
+
+func (s *Service) answerContext(ctx context.Context, message string, visible *VisibleContext) (Response, error) {
+	if visible == nil || len(visible.Components) == 0 {
+		return Response{}, errors.New("there is no visible result to answer a question about")
+	}
+	var answer contextualAnswer
+	err := s.completeJSON(ctx, s.cfg.ThinkingModel, `Answer the user's question using only the currently visible Remventory interface data.
+Return only JSON with schema {"answer":"concise answer"}. Do not claim that data changed and do not create a proposal.
+Visible interface: `+mustJSON(visible), message, &answer)
+	if err != nil {
+		return Response{}, fmt.Errorf("ask model about visible context: %w", err)
+	}
+	components := make([]Component, 0, len(visible.Components)+1)
+	components = append(components, Component{Type: "text", Data: answer.Answer})
+	components = append(components, visible.Components...)
+	state := visible.State
+	if state == "" {
+		state = "completed"
+	}
+	return withEvents(Response{State: state, Summary: answer.Answer, Components: components}), nil
+}
+
+func pendingProposalFromContext(visible *VisibleContext) (store.Proposal, string, error) {
+	if visible != nil {
+		for _, component := range visible.Components {
+			if component.Type != "category_proposal" && component.Type != "item_proposal" {
+				continue
+			}
+			var proposal store.Proposal
+			raw, _ := json.Marshal(component.Data)
+			if json.Unmarshal(raw, &proposal) == nil && proposal.ID != "" && proposal.Status == "pending" {
+				return proposal, component.Type, nil
+			}
+		}
+	}
+	return store.Proposal{}, "", errors.New("there is no pending proposal on screen to revise")
+}
+
+func (s *Service) summarizeRequest(ctx context.Context, message string) string {
+	if !s.modelConfigured(s.cfg.TinyModel) {
+		return truncate(message, 80)
+	}
+	var summary requestSummary
+	err := s.completeJSON(ctx, s.cfg.TinyModel, `Summarize the user's request as a neutral interface label of at most 10 words. Return only JSON: {"summary":"string"}.`, message, &summary)
+	if err != nil || strings.TrimSpace(summary.Summary) == "" {
+		return truncate(message, 80)
+	}
+	return summary.Summary
 }
 
 func (s *Service) proposeCategory(ctx context.Context, message string) (Response, error) {
@@ -281,7 +450,10 @@ func (s *Service) QueryInventory(ctx context.Context, message string, categoryID
 			}
 		}
 	} else {
-		category = bestCategoryMatch(message, categories)
+		category, err = s.selectCategory(ctx, message, categories)
+		if err != nil {
+			return QueryResult{}, err
+		}
 	}
 	if category == nil {
 		return QueryResult{
@@ -298,7 +470,10 @@ func (s *Service) QueryInventory(ctx context.Context, message string, categoryID
 }
 
 func (s *Service) queryInventory(ctx context.Context, message string, categories []store.Category) (Response, error) {
-	category := bestCategoryMatch(message, categories)
+	category, err := s.selectCategory(ctx, message, categories)
+	if err != nil {
+		return Response{}, err
+	}
 	categoryID := ""
 	if category != nil {
 		categoryID = category.ID
@@ -319,10 +494,38 @@ func (s *Service) queryInventory(ctx context.Context, message string, categories
 	}), nil
 }
 
+func (s *Service) selectCategory(ctx context.Context, message string, categories []store.Category) (*store.Category, error) {
+	if len(categories) == 0 {
+		return nil, nil
+	}
+	if category := bestCategoryMatch(message, categories); category != nil {
+		return category, nil
+	}
+	if !s.modelConfigured(s.cfg.MainModel) {
+		return nil, nil
+	}
+
+	categoryBytes, _ := json.Marshal(categories)
+	var selection categorySelection
+	err := s.completeJSON(ctx, s.cfg.MainModel, `Choose the single most relevant inventory category for the request and return only JSON.
+Schema: {"category_id":"uuid or empty string"}
+Use only an id from the provided categories. Return an empty category_id when no category is reasonably relevant.
+Categories: `+string(categoryBytes), message, &selection)
+	if err != nil {
+		return nil, fmt.Errorf("ask model to choose category: %w", err)
+	}
+	for i := range categories {
+		if categories[i].ID == selection.CategoryID {
+			return &categories[i], nil
+		}
+	}
+	return nil, nil
+}
+
 func (s *Service) categoryDraft(ctx context.Context, message string) (categoryDraft, error) {
 	var draft categoryDraft
-	if s.modelConfigured() {
-		err := s.completeJSON(ctx, `Return only JSON for an inventory category proposal.
+	if s.modelConfigured(s.cfg.MainModel) {
+		err := s.completeJSON(ctx, s.cfg.MainModel, `Return only JSON for an inventory category proposal.
 Schema:
 {"name":"string","description":"string","attributes":[{"key":"snake_case","label":"string","data_type":"text|number|boolean|date","required":boolean,"display_order":number}]}
 Use 4 to 7 practical attributes.`, message, &draft)
@@ -347,9 +550,9 @@ Use 4 to 7 practical attributes.`, message, &draft)
 
 func (s *Service) itemDraft(ctx context.Context, message string, categories []store.Category) (itemDraft, error) {
 	var draft itemDraft
-	if s.modelConfigured() {
+	if s.modelConfigured(s.cfg.MainModel) {
 		categoryBytes, _ := json.Marshal(categories)
-		err := s.completeJSON(ctx, `Return only JSON for an inventory item proposal.
+		err := s.completeJSON(ctx, s.cfg.MainModel, `Return only JSON for an inventory item proposal.
 Schema:
 {"category_name":"string","title":"string","attributes":{},"quantity":number}
 Choose category_name from the provided category list. Put category-specific values in attributes using the category attribute keys.
@@ -383,10 +586,10 @@ func (s *Service) matchExistingItem(ctx context.Context, message string, categor
 		}, nil
 	}
 
-	if s.modelConfigured() {
+	if s.modelConfigured(s.cfg.ThinkingModel) {
 		var modelResult modelQueryResult
 		itemBytes, _ := json.Marshal(items)
-		err := s.completeJSON(ctx, `Return only JSON for an inventory existence check.
+		err := s.completeJSON(ctx, s.cfg.ThinkingModel, `Return only JSON for an inventory existence check.
 Schema:
 {"judgment":"yes|no|uncertain","confidence":"low|medium|high","summary":"string","matched_item_ids":["string"]}
 Use yes only when the inventory clearly contains the requested item. Use uncertain for likely variants or partial matches.
@@ -420,15 +623,18 @@ Inventory items: `+string(itemBytes), message, &modelResult)
 	}, nil
 }
 
-func (s *Service) completeJSON(ctx context.Context, system, user string, target any) error {
+func (s *Service) completeJSON(ctx context.Context, model, system, user string, target any) error {
 	body := map[string]any{
-		"model": s.cfg.OpenAIModel,
+		"model": model,
 		"messages": []map[string]string{
 			{"role": "system", "content": system},
 			{"role": "user", "content": user},
 		},
 		"temperature": 0.2,
 		"stream":      false,
+		"response_format": map[string]string{
+			"type": "json_object",
+		},
 	}
 	bodyBytes, err := json.Marshal(body)
 	if err != nil {
@@ -475,8 +681,21 @@ func (s *Service) completeJSON(ctx context.Context, system, user string, target 
 	return json.Unmarshal([]byte(strings.TrimSpace(content)), target)
 }
 
-func (s *Service) modelConfigured() bool {
-	return s.cfg.OpenAIBaseURL != "" && s.cfg.OpenAIModel != ""
+func (s *Service) modelConfigured(model string) bool {
+	return s.cfg.OpenAIBaseURL != "" && model != ""
+}
+
+func mustJSON(value any) string {
+	raw, _ := json.Marshal(value)
+	return string(raw)
+}
+
+func truncate(value string, limit int) string {
+	value = strings.TrimSpace(value)
+	if len(value) <= limit {
+		return value
+	}
+	return strings.TrimSpace(value[:limit-1]) + "…"
 }
 
 func withEvents(response Response) Response {

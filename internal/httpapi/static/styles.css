@@ -46,11 +46,19 @@ textarea {
 .topbar,
 .composer,
 .processing,
+.configuration-warning,
 .card,
 .empty {
   background: var(--panel);
   border: 1px solid var(--line);
   border-radius: 8px;
+}
+
+.configuration-warning {
+  padding: 12px 16px;
+  border-color: #d8b36a;
+  background: #fff8e8;
+  color: #684b12;
 }
 
 .topbar {
@@ -59,6 +67,25 @@ textarea {
   justify-content: space-between;
   gap: 16px;
   padding: 18px 20px;
+}
+
+.identity {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+
+.remy-avatar {
+  width: 76px;
+  height: 76px;
+  flex: 0 0 auto;
+  border-radius: 18px;
+}
+
+.tagline {
+  margin: 3px 0 0;
+  color: var(--muted);
+  font-size: 0.88rem;
 }
 
 .eyebrow {
@@ -116,6 +143,16 @@ h3 {
 
 .summary {
   color: var(--muted);
+}
+
+.request-summary {
+  width: fit-content;
+  margin: 0;
+  padding: 5px 9px;
+  border-radius: 999px;
+  background: #e7f0ec;
+  color: #31594d;
+  font-size: 0.78rem;
 }
 
 .card {
@@ -253,6 +290,11 @@ pre {
   .topbar {
     align-items: flex-start;
     flex-direction: column;
+  }
+
+  .remy-avatar {
+    width: 64px;
+    height: 64px;
   }
 
   .state {
