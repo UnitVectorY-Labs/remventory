@@ -50,7 +50,13 @@ MCP clients can connect to the streamable HTTP endpoint:
 http://localhost:8080/mcp
 ```
 
-The initial tool surface includes Remy requests, category reads, proposal creation, proposal confirmation, item listing, and inventory queries. Data-changing requests still produce proposals first.
+The MCP tool surface includes category reads, category create/update/delete proposals, item create/update/delete/quantity proposals, proposal confirmation, item listing, inventory queries, and Remy requests. Every data-changing action still produces a proposal first.
+
+## Working with Remy
+
+Use the composer to create, update, remove, or browse inventory. Press Enter to send and Shift+Enter for a new line. The **New chat** button clears the visible conversation without changing inventory.
+
+Remy shows category attributes and item values in tables. When proposing an item, it only includes details stated in the request (or already stored on an item being updated); missing details remain blank rather than being guessed. Approve or reject the proposal in the page—rejection does not change inventory.
 
 ## Prototype Proposal Flow
 
@@ -114,12 +120,31 @@ curl -X POST http://localhost:8080/api/query_inventory \
 
 When adding an item through Remy, Remventory checks the relevant category first. If a clear match already exists, Remy proposes a quantity change instead of silently creating a duplicate.
 
-## Docker
+To replace a category definition (including adding, changing, or removing attributes), create an update proposal with the complete resulting attribute list:
+
+```sh
+curl -X POST http://localhost:8080/api/proposals/category \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "operation": "update",
+    "category_id": "<category-id>",
+    "name": "Video Games",
+    "description": "Physical and digital games",
+    "attributes": [
+      {"key": "platform", "label": "Platform", "data_type": "text", "required": true},
+      {"key": "condition", "label": "Condition", "data_type": "text"}
+    ]
+  }'
+```
+
+Set `operation` to `delete` with a `category_id` to propose deleting a category. Approving that proposal also deletes its items. Item proposals likewise accept `update` and `delete`; updates require the current `item_id`, and all operations require approval before they are applied.
+
+## Container image
 
 Build the single application image:
 
 ```sh
-docker build -t remventory .
+container build -t remventory .
 ```
 
 Run it with the same environment variables used for local development.

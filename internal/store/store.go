@@ -78,19 +78,22 @@ type Proposal struct {
 }
 
 type CategoryProposalPayload struct {
+	Operation   string           `json:"operation"`
+	CategoryID  string           `json:"category_id,omitempty"`
 	Name        string           `json:"name"`
 	Description string           `json:"description,omitempty"`
 	Attributes  []AttributeDraft `json:"attributes"`
 }
 
 type ItemProposalPayload struct {
-	Operation     string          `json:"operation"`
-	CategoryID    string          `json:"category_id"`
-	ItemID        string          `json:"item_id,omitempty"`
-	Title         string          `json:"title"`
-	Attributes    json.RawMessage `json:"attributes"`
-	Quantity      int             `json:"quantity,omitempty"`
-	QuantityDelta int             `json:"quantity_delta,omitempty"`
+	Operation          string          `json:"operation"`
+	CategoryID         string          `json:"category_id"`
+	ItemID             string          `json:"item_id,omitempty"`
+	Title              string          `json:"title"`
+	Attributes         json.RawMessage `json:"attributes"`
+	PreviousAttributes json.RawMessage `json:"previous_attributes,omitempty"`
+	Quantity           int             `json:"quantity,omitempty"`
+	QuantityDelta      int             `json:"quantity_delta,omitempty"`
 }
 
 type ProposalDecision struct {
@@ -248,43 +251,43 @@ func (s *Store) GetCategoryDefinition(ctx context.Context, categoryID string) (C
 }
 
 func (s *Store) CreateCategoryProposal(ctx context.Context, payload CategoryProposalPayload) (Proposal, error) {
-	if payload.Name == "" {
-		return Proposal{}, errors.New("category name is required")
+	if err := validateCategoryProposalPayload(&payload); err != nil {
+		return Proposal{}, err
 	}
-	for i := range payload.Attributes {
-		if payload.Attributes[i].Key == "" || payload.Attributes[i].Label == "" || payload.Attributes[i].DataType == "" {
-			return Proposal{}, errors.New("attribute key, label, and data_type are required")
+	if payload.Operation == "delete" && strings.TrimSpace(payload.Name) == "" {
+		category, err := s.GetCategoryDefinition(ctx, payload.CategoryID)
+		if err != nil {
+			return Proposal{}, err
 		}
-		if len(payload.Attributes[i].Config) == 0 {
-			payload.Attributes[i].Config = json.RawMessage(`{}`)
+		payload.Name = category.Name
+		payload.Description = category.Description
+		payload.Attributes = make([]AttributeDraft, 0, len(category.Attributes))
+		for _, attribute := range category.Attributes {
+			payload.Attributes = append(payload.Attributes, AttributeDraft{
+				Key:          attribute.Key,
+				Label:        attribute.Label,
+				DataType:     attribute.DataType,
+				Required:     attribute.Required,
+				DisplayOrder: attribute.DisplayOrder,
+				Config:       attribute.Config,
+			})
 		}
 	}
 	return s.createProposal(ctx, DefaultUserID, "category_create", payload)
 }
 
 func (s *Store) CreateItemProposal(ctx context.Context, payload ItemProposalPayload) (Proposal, error) {
-	if payload.Operation == "" {
-		payload.Operation = "create"
+	var err error
+	payload, err = s.validateItemProposalPayload(payload)
+	if err != nil {
+		return Proposal{}, err
 	}
-	if payload.CategoryID == "" {
-		return Proposal{}, errors.New("category_id is required")
-	}
-	if payload.Title == "" {
-		return Proposal{}, errors.New("title is required")
-	}
-	if len(payload.Attributes) == 0 {
-		payload.Attributes = json.RawMessage(`{}`)
-	}
-	if payload.Quantity == 0 {
-		payload.Quantity = 1
-	}
-	switch payload.Operation {
-	case "create", "update", "quantity_adjust":
-	default:
-		return Proposal{}, errors.New("operation must be create, update, or quantity_adjust")
-	}
-	if payload.Operation != "create" && payload.ItemID == "" {
-		return Proposal{}, errors.New("item_id is required for update and quantity_adjust operations")
+	if payload.Operation == "update" && len(payload.PreviousAttributes) == 0 {
+		current, err := s.getItem(ctx, payload.ItemID)
+		if err != nil {
+			return Proposal{}, err
+		}
+		payload.PreviousAttributes = current.Attributes
 	}
 	return s.createProposal(ctx, DefaultUserID, "item_change", payload)
 }
@@ -341,13 +344,19 @@ func (s *Store) RevisePendingProposal(ctx context.Context, proposalID string, pa
 	switch proposal.Type {
 	case "category_create":
 		var revised CategoryProposalPayload
-		if err := json.Unmarshal(payload, &revised); err != nil || revised.Name == "" || len(revised.Attributes) == 0 {
-			return Proposal{}, errors.New("revised category proposal requires a name and attributes")
+		if err := json.Unmarshal(payload, &revised); err != nil {
+			return Proposal{}, errors.New("revised category proposal must be valid")
+		}
+		if err := validateCategoryProposalPayload(&revised); err != nil {
+			return Proposal{}, fmt.Errorf("revised category proposal: %w", err)
 		}
 	case "item_change":
 		var revised ItemProposalPayload
-		if err := json.Unmarshal(payload, &revised); err != nil || revised.CategoryID == "" || revised.Title == "" {
-			return Proposal{}, errors.New("revised item proposal requires category_id and title")
+		if err := json.Unmarshal(payload, &revised); err != nil {
+			return Proposal{}, errors.New("revised item proposal must be valid")
+		}
+		if _, err := s.validateItemProposalPayload(revised); err != nil {
+			return Proposal{}, fmt.Errorf("revised item proposal: %w", err)
 		}
 	default:
 		return Proposal{}, fmt.Errorf("unsupported proposal type %q", proposal.Type)
@@ -418,7 +427,7 @@ func (s *Store) commitProposal(ctx context.Context, tx pgx.Tx, proposal Proposal
 		if err := json.Unmarshal(proposal.ProposedPayload, &payload); err != nil {
 			return err
 		}
-		return insertCategory(ctx, tx, proposal.UserID, payload)
+		return applyCategoryChange(ctx, tx, proposal.UserID, payload)
 	case "item_change":
 		var payload ItemProposalPayload
 		if err := json.Unmarshal(proposal.ProposedPayload, &payload); err != nil {
@@ -427,6 +436,85 @@ func (s *Store) commitProposal(ctx context.Context, tx pgx.Tx, proposal Proposal
 		return applyItemChange(ctx, tx, proposal.UserID, payload)
 	default:
 		return fmt.Errorf("unsupported proposal type %q", proposal.Type)
+	}
+}
+
+func validateCategoryProposalPayload(payload *CategoryProposalPayload) error {
+	if payload.Operation == "" {
+		payload.Operation = "create"
+	}
+	switch payload.Operation {
+	case "create":
+		if strings.TrimSpace(payload.Name) == "" {
+			return errors.New("category name is required")
+		}
+	case "update":
+		if payload.CategoryID == "" || strings.TrimSpace(payload.Name) == "" {
+			return errors.New("category_id and name are required for update")
+		}
+	case "delete":
+		if payload.CategoryID == "" {
+			return errors.New("category_id is required for delete")
+		}
+		return nil
+	default:
+		return errors.New("operation must be create, update, or delete")
+	}
+	for i := range payload.Attributes {
+		if payload.Attributes[i].Key == "" || payload.Attributes[i].Label == "" || payload.Attributes[i].DataType == "" {
+			return errors.New("attribute key, label, and data_type are required")
+		}
+		if len(payload.Attributes[i].Config) == 0 {
+			payload.Attributes[i].Config = json.RawMessage(`{}`)
+		}
+	}
+	return nil
+}
+
+func (s *Store) validateItemProposalPayload(payload ItemProposalPayload) (ItemProposalPayload, error) {
+	if payload.Operation == "" {
+		payload.Operation = "create"
+	}
+	if payload.CategoryID == "" {
+		return ItemProposalPayload{}, errors.New("category_id is required")
+	}
+	if payload.Operation != "delete" && strings.TrimSpace(payload.Title) == "" {
+		return ItemProposalPayload{}, errors.New("title is required")
+	}
+	if len(payload.Attributes) == 0 {
+		payload.Attributes = json.RawMessage(`{}`)
+	}
+	if payload.Operation == "create" && payload.Quantity == 0 {
+		payload.Quantity = 1
+	}
+	switch payload.Operation {
+	case "create", "update", "delete", "quantity_adjust":
+	default:
+		return ItemProposalPayload{}, errors.New("operation must be create, update, delete, or quantity_adjust")
+	}
+	if payload.Operation != "create" && payload.ItemID == "" {
+		return ItemProposalPayload{}, errors.New("item_id is required for update, delete, and quantity_adjust operations")
+	}
+	return payload, nil
+}
+
+func applyCategoryChange(ctx context.Context, tx pgx.Tx, userID string, payload CategoryProposalPayload) error {
+	switch payload.Operation {
+	case "create":
+		return insertCategory(ctx, tx, userID, payload)
+	case "update":
+		return updateCategory(ctx, tx, userID, payload)
+	case "delete":
+		tag, err := tx.Exec(ctx, `delete from categories where id = $1 and user_id = $2`, payload.CategoryID, userID)
+		if err != nil {
+			return err
+		}
+		if tag.RowsAffected() == 0 {
+			return ErrNotFound
+		}
+		return nil
+	default:
+		return fmt.Errorf("unsupported category operation %q", payload.Operation)
 	}
 }
 
@@ -452,6 +540,37 @@ func insertCategory(ctx context.Context, tx pgx.Tx, userID string, payload Categ
 			values ($1, $2, $3, $4, $5, $6, $7::jsonb)`,
 			categoryID, attr.Key, attr.Label, attr.DataType, attr.Required, order, string(config),
 		); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func updateCategory(ctx context.Context, tx pgx.Tx, userID string, payload CategoryProposalPayload) error {
+	tag, err := tx.Exec(ctx, `update categories set name = $3, description = nullif($4, ''), updated_at = now()
+		where id = $1 and user_id = $2`, payload.CategoryID, userID, payload.Name, payload.Description)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrNotFound
+	}
+	if _, err := tx.Exec(ctx, `delete from category_attributes where category_id = $1`, payload.CategoryID); err != nil {
+		return err
+	}
+	for i, attr := range payload.Attributes {
+		order := attr.DisplayOrder
+		if order == 0 {
+			order = i + 1
+		}
+		config := attr.Config
+		if len(config) == 0 {
+			config = json.RawMessage(`{}`)
+		}
+		if _, err := tx.Exec(ctx, `insert into category_attributes
+			(category_id, key, label, data_type, required, display_order, config_json)
+			values ($1, $2, $3, $4, $5, $6, $7::jsonb)`,
+			payload.CategoryID, attr.Key, attr.Label, attr.DataType, attr.Required, order, string(config)); err != nil {
 			return err
 		}
 	}
@@ -499,6 +618,15 @@ func applyItemChange(ctx context.Context, tx pgx.Tx, userID string, payload Item
 			return ErrNotFound
 		}
 		return nil
+	case "delete":
+		tag, err := tx.Exec(ctx, `delete from items where id = $1 and user_id = $2`, payload.ItemID, userID)
+		if err != nil {
+			return err
+		}
+		if tag.RowsAffected() == 0 {
+			return ErrNotFound
+		}
+		return nil
 	default:
 		return fmt.Errorf("unsupported item operation %q", payload.Operation)
 	}
@@ -514,6 +642,25 @@ func (s *Store) ListItems(ctx context.Context, categoryID string, limit, offset 
 		return nil, err
 	}
 	return pgx.CollectRows(rows, pgx.RowToStructByName[Item])
+}
+
+func (s *Store) getItem(ctx context.Context, itemID string) (Item, error) {
+	var item Item
+	err := s.pool.QueryRow(ctx, `select id, user_id, category_id, title, attributes_jsonb as attributes, quantity, created_at, updated_at
+		from items where id = $1 and user_id = $2`, itemID, DefaultUserID).Scan(
+		&item.ID,
+		&item.UserID,
+		&item.CategoryID,
+		&item.Title,
+		&item.Attributes,
+		&item.Quantity,
+		&item.CreatedAt,
+		&item.UpdatedAt,
+	)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return Item{}, ErrNotFound
+	}
+	return item, err
 }
 
 type rowScanner interface {

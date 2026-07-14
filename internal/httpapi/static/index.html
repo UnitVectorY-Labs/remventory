@@ -18,7 +18,10 @@
             <p class="tagline">Your inventory librarian</p>
             </div>
           </div>
-          <div id="state" class="state">Ready</div>
+          <div class="topbar-actions">
+            <button id="new-chat" class="secondary new-chat" type="button">New chat</button>
+            <div id="state" class="state">Ready</div>
+          </div>
         </header>
 
 		<section id="configuration-warning" class="configuration-warning" hidden></section>
@@ -31,8 +34,11 @@
         </section>
 
         <form id="remy-form" class="composer">
-          <input id="message" name="message" autocomplete="off" placeholder="Ask Remy to track, add, or show inventory" required>
-          <button type="submit">Send</button>
+          <textarea id="message" name="message" rows="3" placeholder="Ask Remy to track, add, update, remove, or show inventory" required></textarea>
+          <div class="composer-actions">
+            <p>Enter to send · Shift+Enter for a new line</p>
+            <button id="send-request" type="submit">Send</button>
+          </div>
         </form>
 
         <section id="processing" class="processing" aria-live="polite" hidden>

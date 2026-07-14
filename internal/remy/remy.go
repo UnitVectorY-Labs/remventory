@@ -50,16 +50,20 @@ type Component struct {
 }
 
 type categoryDraft struct {
+	Operation   string                 `json:"operation"`
+	CategoryID  string                 `json:"category_id"`
 	Name        string                 `json:"name"`
 	Description string                 `json:"description"`
 	Attributes  []store.AttributeDraft `json:"attributes"`
 }
 
 type itemDraft struct {
-	CategoryName string          `json:"category_name"`
-	Title        string          `json:"title"`
-	Attributes   json.RawMessage `json:"attributes"`
-	Quantity     int             `json:"quantity"`
+	Operation     string          `json:"operation"`
+	CategoryName  string          `json:"category_name"`
+	Title         string          `json:"title"`
+	Attributes    json.RawMessage `json:"attributes"`
+	Quantity      int             `json:"quantity"`
+	QuantityDelta int             `json:"quantity_delta"`
 }
 
 type QueryResult struct {
@@ -133,7 +137,9 @@ func (s *Service) Handle(ctx context.Context, req Request) (Response, error) {
 	var response Response
 	switch action {
 	case "category_change":
-		response, err = s.proposeCategory(ctx, message)
+		response, err = s.proposeCategory(ctx, message, categories)
+	case "category_definition":
+		response, err = s.categoryDefinition(ctx, message, categories)
 	case "query_inventory":
 		response, err = s.queryInventory(ctx, message, categories)
 	case "list_items":
@@ -147,10 +153,10 @@ func (s *Service) Handle(ctx context.Context, req Request) (Response, error) {
 	default:
 		response = withEvents(Response{
 			State:   "completed",
-			Summary: "I can help create a tracking category, add an item, or list items in a category.",
+			Summary: "I can manage categories and items, then show a clear proposal before any change is saved.",
 			Components: []Component{{
 				Type: "text",
-				Data: "Try requests like \"I want to track my LEGO sets\", \"Add Super Mario Bros. Wonder for Nintendo Switch\", or \"Show me my video games.\"",
+				Data: "Try “I want to track my LEGO sets”, “add Catan to board games”, “remove the condition attribute from board games”, or “show my board games.”",
 			}},
 		})
 	}
@@ -167,8 +173,9 @@ func (s *Service) planRequest(ctx context.Context, message string, categories []
 		contextBytes, _ := json.Marshal(visible)
 		var plan requestPlan
 		err := s.completeJSON(ctx, s.cfg.MainModel, `Classify the inventory request and return only JSON.
-Schema: {"action":"category_change|item_change|list_items|query_inventory|revise_proposal|answer_context|help"}
+		Schema: {"action":"category_change|category_definition|item_change|list_items|query_inventory|revise_proposal|answer_context|help"}
 Use category_change when the user wants to start tracking a kind of thing or change which attributes are tracked.
+Use category_definition when the user asks which attributes or fields a category has, without requesting a change.
 Use item_change when the user wants to add, update, remove, or change the quantity of an inventory item.
 Use list_items when the user wants to browse or see inventory.
 Use query_inventory when the user asks whether a particular item is owned or present.
@@ -180,7 +187,7 @@ Currently visible interface: `+string(contextBytes), message, &plan)
 			return "", fmt.Errorf("ask model to interpret request: %w", err)
 		}
 		switch plan.Action {
-		case "category_change", "item_change", "list_items", "query_inventory", "revise_proposal", "answer_context", "help":
+		case "category_change", "category_definition", "item_change", "list_items", "query_inventory", "revise_proposal", "answer_context", "help":
 			return plan.Action, nil
 		default:
 			return "", fmt.Errorf("model returned unsupported action %q", plan.Action)
@@ -189,6 +196,8 @@ Currently visible interface: `+string(contextBytes), message, &plan)
 
 	lower := strings.ToLower(message)
 	switch {
+	case looksLikeCategoryDefinitionRequest(lower):
+		return "category_definition", nil
 	case looksLikeExistenceQuery(lower):
 		return "query_inventory", nil
 	case looksLikeListRequest(lower):
@@ -200,6 +209,17 @@ Currently visible interface: `+string(contextBytes), message, &plan)
 	default:
 		return "help", nil
 	}
+}
+
+func (s *Service) categoryDefinition(ctx context.Context, message string, categories []store.Category) (Response, error) {
+	category, err := s.selectCategory(ctx, message, categories)
+	if err != nil {
+		return Response{}, err
+	}
+	if category == nil {
+		return withEvents(Response{State: "completed", Summary: "Choose a category to view its attributes.", Components: []Component{{Type: "category_list", Data: categories}}}), nil
+	}
+	return withEvents(Response{State: "completed", Summary: fmt.Sprintf("%s has %d attribute(s).", category.Name, len(category.Attributes)), Components: []Component{{Type: "category_definition", Data: category}}}), nil
 }
 
 func (s *Service) reviseProposal(ctx context.Context, message string, visible *VisibleContext) (Response, error) {
@@ -220,6 +240,8 @@ func (s *Service) reviseProposal(ctx context.Context, message string, visible *V
 Return only JSON with schema:
 {"proposal_id":"string","summary":"brief description of what changed","proposed_payload":{}}
 proposal_id must remain unchanged. proposed_payload must be the complete revised payload, preserving every unchanged field and using the same schema as the current payload.
+Do not invent values that the user did not request. For item attributes, preserve existing values unless the user explicitly changes them.
+When present, previous_attributes is an immutable before-change snapshot used by the confirmation view; preserve it exactly.
 Current proposal: `+mustJSON(stored), message, &revision)
 	if err != nil {
 		return Response{}, fmt.Errorf("ask model to revise proposal: %w", err)
@@ -286,13 +308,35 @@ func (s *Service) summarizeRequest(ctx context.Context, message string) string {
 	return summary.Summary
 }
 
-func (s *Service) proposeCategory(ctx context.Context, message string) (Response, error) {
-	draft, err := s.categoryDraft(ctx, message)
+func (s *Service) proposeCategory(ctx context.Context, message string, categories []store.Category) (Response, error) {
+	draft, err := s.categoryDraft(ctx, message, categories)
 	if err != nil {
 		return Response{}, err
 	}
+	if draft.Operation == "" {
+		draft.Operation = "create"
+	}
+	if draft.Operation == "update" || draft.Operation == "delete" {
+		category := categoryByID(draft.CategoryID, categories)
+		if category == nil {
+			category = bestCategoryMatch(message, categories)
+		}
+		if category == nil {
+			return withEvents(Response{State: "completed", Summary: "I could not confidently identify the category to change.", Components: []Component{{Type: "category_list", Data: categories}}}), nil
+		}
+		draft.CategoryID = category.ID
+		if draft.Operation == "delete" {
+			draft.Name = category.Name
+			draft.Description = category.Description
+			draft.Attributes = attributeDrafts(category.Attributes)
+		} else if draft.Name == "" {
+			draft.Name = category.Name
+		}
+	}
 
 	proposal, err := s.store.CreateCategoryProposal(ctx, store.CategoryProposalPayload{
+		Operation:   draft.Operation,
+		CategoryID:  draft.CategoryID,
 		Name:        draft.Name,
 		Description: draft.Description,
 		Attributes:  draft.Attributes,
@@ -303,7 +347,7 @@ func (s *Service) proposeCategory(ctx context.Context, message string) (Response
 
 	return withEvents(Response{
 		State:   "proposing",
-		Summary: "Review this category before it is added.",
+		Summary: categoryProposalSummary(draft.Operation),
 		Components: []Component{{
 			Type: "category_proposal",
 			Data: proposal,
@@ -342,11 +386,55 @@ func (s *Service) proposeItem(ctx context.Context, message string, categories []
 			}},
 		}), nil
 	}
+	if draft.Operation == "" {
+		draft.Operation = "create"
+	}
+	draft.Title = itemTitleForCategory(draft.Title, *category)
 
 	items, err := s.store.ListItems(ctx, category.ID, 200, 0)
 	if err != nil {
 		return Response{}, err
 	}
+	if draft.Operation != "create" {
+		target, err := s.itemForChange(ctx, message, *category, items, draft.Title)
+		if err != nil {
+			return Response{}, err
+		}
+		if target == nil {
+			return withEvents(Response{State: "completed", Summary: "I could not identify one item to change with confidence. Include the exact title or set number and try again.", Components: []Component{{Type: "item_list", Data: map[string]any{"category": category, "items": items}}}}), nil
+		}
+		attributes, err := itemAttributesForCategory(draft.Attributes, *category, target.Attributes)
+		if err != nil {
+			return Response{}, err
+		}
+		payload := store.ItemProposalPayload{
+			Operation:          draft.Operation,
+			CategoryID:         category.ID,
+			ItemID:             target.ID,
+			Title:              target.Title,
+			Attributes:         attributes,
+			PreviousAttributes: target.Attributes,
+			Quantity:           target.Quantity,
+			QuantityDelta:      draft.QuantityDelta,
+		}
+		if draft.Operation == "quantity_adjust" && payload.QuantityDelta == 0 {
+			return withEvents(Response{State: "completed", Summary: "Tell me how much to change the quantity by so I do not guess.", Components: []Component{{Type: "item_list", Data: map[string]any{"category": category, "items": []store.Item{*target}}}}}), nil
+		}
+		if draft.Operation == "delete" {
+			payload.Attributes = target.Attributes
+		}
+		proposal, err := s.store.CreateItemProposal(ctx, payload)
+		if err != nil {
+			return Response{}, err
+		}
+		return withEvents(Response{State: "proposing", Summary: itemProposalSummary(draft.Operation), Components: []Component{{Type: "item_proposal", Data: proposal}}}), nil
+	}
+
+	attributes, err := itemAttributesForCategory(draft.Attributes, *category, nil)
+	if err != nil {
+		return Response{}, err
+	}
+	draft.Attributes = attributes
 	duplicate, err := s.matchExistingItem(ctx, message, *category, items, draft.Title)
 	if err != nil {
 		return Response{}, err
@@ -522,14 +610,19 @@ Categories: `+string(categoryBytes), message, &selection)
 	return nil, nil
 }
 
-func (s *Service) categoryDraft(ctx context.Context, message string) (categoryDraft, error) {
+func (s *Service) categoryDraft(ctx context.Context, message string, categories []store.Category) (categoryDraft, error) {
 	var draft categoryDraft
 	if s.modelConfigured(s.cfg.MainModel) {
+		categoryBytes, _ := json.Marshal(categories)
 		err := s.completeJSON(ctx, s.cfg.MainModel, `Return only JSON for an inventory category proposal.
 Schema:
-{"name":"string","description":"string","attributes":[{"key":"snake_case","label":"string","data_type":"text|number|boolean|date","required":boolean,"display_order":number}]}
-Use 4 to 7 practical attributes.`, message, &draft)
-		if err == nil && draft.Name != "" && len(draft.Attributes) > 0 {
+{"operation":"create|update|delete","category_id":"string","name":"string","description":"string","attributes":[{"key":"snake_case","label":"string","data_type":"text|number|boolean|date","required":boolean,"display_order":number}]}
+For create, suggest a practical category definition. For update, choose one existing category_id and return the complete resulting attribute list: preserve existing attributes unless the user explicitly asks to add, remove, or change one. For delete, return the existing category_id and no invented details. Use only category ids from the provided list.
+Existing categories: `+string(categoryBytes), message, &draft)
+		if err == nil && draft.Operation == "delete" && draft.CategoryID != "" {
+			return draft, nil
+		}
+		if err == nil && draft.Name != "" {
 			normalizeAttributes(draft.Attributes)
 			return draft, nil
 		}
@@ -537,6 +630,7 @@ Use 4 to 7 practical attributes.`, message, &draft)
 
 	name := fallbackCategoryName(message)
 	draft = categoryDraft{
+		Operation:   "create",
 		Name:        name,
 		Description: "Items tracked in " + name + ".",
 		Attributes: []store.AttributeDraft{
@@ -554,14 +648,17 @@ func (s *Service) itemDraft(ctx context.Context, message string, categories []st
 		categoryBytes, _ := json.Marshal(categories)
 		err := s.completeJSON(ctx, s.cfg.MainModel, `Return only JSON for an inventory item proposal.
 Schema:
-{"category_name":"string","title":"string","attributes":{},"quantity":number}
-Choose category_name from the provided category list. Put category-specific values in attributes using the category attribute keys.
+{"operation":"create|update|delete|quantity_adjust","category_name":"string","title":"string","attributes":{},"quantity":number,"quantity_delta":number}
+Choose category_name from the provided category list. Set title to the item name only; never include request wording such as “to <category>”. Use only category attribute keys. Include an attribute value only when the user directly provided it or it is unambiguously stated in the request. Never invent, estimate, assume, or complete missing item details. For update, attributes must contain only explicitly requested changes; omitted values will remain unchanged. For delete, do not add attributes. For quantity_adjust, set quantity_delta only when an explicit change amount is provided.
 Categories: `+string(categoryBytes), message, &draft)
 		if err == nil && draft.Title != "" {
 			if len(draft.Attributes) == 0 {
 				draft.Attributes = json.RawMessage(`{}`)
 			}
-			if draft.Quantity == 0 {
+			if draft.Operation == "" {
+				draft.Operation = "create"
+			}
+			if draft.Operation == "create" && draft.Quantity == 0 {
 				draft.Quantity = 1
 			}
 			return draft, nil
@@ -569,6 +666,7 @@ Categories: `+string(categoryBytes), message, &draft)
 	}
 
 	return itemDraft{
+		Operation:    "create",
 		CategoryName: "",
 		Title:        fallbackItemTitle(message),
 		Attributes:   json.RawMessage(`{}`),
@@ -717,6 +815,11 @@ func looksLikeCategoryRequest(message string, categories []store.Category) bool 
 	return len(categories) == 0 && !looksLikeListRequest(message)
 }
 
+func looksLikeCategoryDefinitionRequest(message string) bool {
+	return (strings.Contains(message, "attribute") || strings.Contains(message, "field")) &&
+		(strings.Contains(message, "what") || strings.Contains(message, "show") || strings.Contains(message, "list") || strings.Contains(message, "which"))
+}
+
 func looksLikeItemAdd(message string) bool {
 	return strings.HasPrefix(message, "add ") || strings.Contains(message, " add ") || strings.Contains(message, "inventory ")
 }
@@ -763,6 +866,173 @@ func normalizeAttributes(attributes []store.AttributeDraft) {
 		if len(attributes[i].Config) == 0 {
 			attributes[i].Config = json.RawMessage(`{}`)
 		}
+	}
+}
+
+func attributeDrafts(attributes []store.Attribute) []store.AttributeDraft {
+	drafts := make([]store.AttributeDraft, 0, len(attributes))
+	for _, attribute := range attributes {
+		drafts = append(drafts, store.AttributeDraft{
+			Key:          attribute.Key,
+			Label:        attribute.Label,
+			DataType:     attribute.DataType,
+			Required:     attribute.Required,
+			DisplayOrder: attribute.DisplayOrder,
+			Config:       attribute.Config,
+		})
+	}
+	return drafts
+}
+
+func categoryByID(id string, categories []store.Category) *store.Category {
+	for i := range categories {
+		if categories[i].ID == id {
+			return &categories[i]
+		}
+	}
+	return nil
+}
+
+func exactItemMatch(title string, items []store.Item) *store.Item {
+	for i := range items {
+		if normalizedTitle(items[i].Title) == normalizedTitle(title) {
+			return &items[i]
+		}
+	}
+	return nil
+}
+
+func (s *Service) itemForChange(ctx context.Context, message string, category store.Category, items []store.Item, title string) (*store.Item, error) {
+	if item := exactItemMatch(title, items); item != nil {
+		return item, nil
+	}
+
+	result, err := s.matchExistingItem(ctx, message, category, items, title)
+	if err != nil {
+		return nil, err
+	}
+	if result.Judgment == "yes" && len(result.Matches) == 1 {
+		return &result.Matches[0], nil
+	}
+
+	if item := distinctiveTitleMatch(title, items); item != nil {
+		return item, nil
+	}
+	return nil, nil
+}
+
+func distinctiveTitleMatch(title string, items []store.Item) *store.Item {
+	wanted := distinctiveWords(title)
+	if len(wanted) < 2 {
+		return nil
+	}
+	var match *store.Item
+	for i := range items {
+		available := make(map[string]bool)
+		for _, word := range distinctiveWords(items[i].Title) {
+			available[word] = true
+		}
+		for _, word := range wanted {
+			if !available[word] {
+				goto nextItem
+			}
+		}
+		if match != nil {
+			return nil
+		}
+		match = &items[i]
+	nextItem:
+	}
+	return match
+}
+
+func distinctiveWords(value string) []string {
+	ignored := map[string]bool{
+		"a": true, "an": true, "and": true, "for": true, "in": true, "is": true,
+		"lego": true, "of": true, "set": true, "the": true, "to": true,
+	}
+	words := strings.FieldsFunc(strings.ToLower(value), func(r rune) bool {
+		return r < 'a' || r > 'z'
+	})
+	unique := make(map[string]bool)
+	result := make([]string, 0, len(words))
+	for _, word := range words {
+		if len(word) < 2 || ignored[word] || unique[word] {
+			continue
+		}
+		unique[word] = true
+		result = append(result, word)
+	}
+	return result
+}
+
+func itemTitleForCategory(title string, category store.Category) string {
+	title = strings.TrimSpace(title)
+	lower := strings.ToLower(title)
+	for _, connector := range []string{" to ", " in ", " under "} {
+		suffix := connector + strings.ToLower(category.Name)
+		if strings.HasSuffix(lower, suffix) {
+			return strings.TrimSpace(title[:len(title)-len(suffix)])
+		}
+	}
+	return title
+}
+
+func itemAttributesForCategory(raw json.RawMessage, category store.Category, existing json.RawMessage) (json.RawMessage, error) {
+	values := map[string]any{}
+	if len(existing) > 0 && string(existing) != "null" {
+		if err := json.Unmarshal(existing, &values); err != nil {
+			return nil, fmt.Errorf("read existing item attributes: %w", err)
+		}
+	}
+	var supplied map[string]any
+	if len(raw) > 0 && string(raw) != "null" {
+		if err := json.Unmarshal(raw, &supplied); err != nil {
+			return nil, errors.New("item attributes must be an object")
+		}
+	}
+	allowed := make(map[string]store.Attribute, len(category.Attributes))
+	for _, attribute := range category.Attributes {
+		allowed[attribute.Key] = attribute
+	}
+	for key := range values {
+		if _, ok := allowed[key]; !ok {
+			delete(values, key)
+		}
+	}
+	for key, value := range supplied {
+		if _, ok := allowed[key]; ok {
+			values[key] = value
+		}
+	}
+	encoded, err := json.Marshal(values)
+	if err != nil {
+		return nil, err
+	}
+	return encoded, nil
+}
+
+func categoryProposalSummary(operation string) string {
+	switch operation {
+	case "update":
+		return "Review the category and attribute changes before they are saved."
+	case "delete":
+		return "Review this category deletion before it is saved. Deleting a category also deletes its items."
+	default:
+		return "Review this category before it is added."
+	}
+}
+
+func itemProposalSummary(operation string) string {
+	switch operation {
+	case "update":
+		return "Review the item changes before they are saved."
+	case "delete":
+		return "Review this item deletion before it is saved."
+	case "quantity_adjust":
+		return "Review the quantity change before it is saved."
+	default:
+		return "Review this item before it is added."
 	}
 }
 

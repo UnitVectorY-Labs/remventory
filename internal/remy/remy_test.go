@@ -53,6 +53,7 @@ func TestPlanRequestFallbacks(t *testing.T) {
 		{"I want to track my board games", "category_change"},
 		{"Do I already have Catan?", "query_inventory"},
 		{"Show me my board games", "list_items"},
+		{"What attributes does board games have?", "category_definition"},
 		{"Add Catan", "item_change"},
 		{"Hello there", "help"},
 	}
@@ -66,6 +67,49 @@ func TestPlanRequestFallbacks(t *testing.T) {
 				t.Fatalf("action = %q, want %q", action, test.action)
 			}
 		})
+	}
+}
+
+func TestItemAttributesOnlyUseCategoryDefinition(t *testing.T) {
+	attributes, err := itemAttributesForCategory(
+		json.RawMessage(`{"condition":"used","made_up":"value"}`),
+		store.Category{Attributes: []store.Attribute{{Key: "condition"}, {Key: "platform"}}},
+		json.RawMessage(`{"platform":"Switch","legacy":"remove me"}`),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var values map[string]string
+	if err := json.Unmarshal(attributes, &values); err != nil {
+		t.Fatal(err)
+	}
+	if values["condition"] != "used" || values["platform"] != "Switch" || len(values) != 2 {
+		t.Fatalf("attributes = %#v", values)
+	}
+}
+
+func TestExactItemMatchDoesNotGuess(t *testing.T) {
+	items := []store.Item{{ID: "one", Title: "Catan"}, {ID: "two", Title: "Catan: Seafarers"}}
+	if match := exactItemMatch("Catan", items); match == nil || match.ID != "one" {
+		t.Fatalf("match = %#v", match)
+	}
+	if match := exactItemMatch("Catan expansion", items); match != nil {
+		t.Fatalf("match = %#v, want nil", match)
+	}
+}
+
+func TestDistinctiveTitleMatchAcceptsOneClearVariant(t *testing.T) {
+	items := []store.Item{{ID: "going-merry", Title: "The Going Merry Pirate Ship"}, {ID: "thousand-sunny", Title: "Thousand Sunny"}}
+	match := distinctiveTitleMatch("Going Merry LEGO set", items)
+	if match == nil || match.ID != "going-merry" {
+		t.Fatalf("match = %#v, want Going Merry", match)
+	}
+}
+
+func TestDistinctiveTitleMatchRejectsAmbiguousVariant(t *testing.T) {
+	items := []store.Item{{ID: "one", Title: "Going Merry Pirate Ship"}, {ID: "two", Title: "Going Merry Display Model"}}
+	if match := distinctiveTitleMatch("Going Merry LEGO set", items); match != nil {
+		t.Fatalf("match = %#v, want nil", match)
 	}
 }
 

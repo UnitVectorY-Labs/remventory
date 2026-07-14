@@ -58,7 +58,9 @@ func New(version string, repo *store.Store, remyService *remy.Service) *mcpserve
 
 	server.AddTool(
 		mcp.NewTool("propose_category_change",
-			mcp.WithDescription("Create a pending proposal for a new category or category attributes. This does not commit data."),
+			mcp.WithDescription("Create a pending proposal to create, update, or delete a category and its attributes. This does not commit data."),
+			mcp.WithString("operation", mcp.Description("create, update, or delete.")),
+			mcp.WithString("category_id", mcp.Description("Existing category ID for update or delete.")),
 			mcp.WithString("name", mcp.Description("Proposed category name.")),
 			mcp.WithString("description", mcp.Description("Optional category description.")),
 			mcp.WithArray("attributes", mcp.Description("Attribute objects with key, label, data_type, required, and display_order.")),
@@ -69,6 +71,8 @@ func New(version string, repo *store.Store, remyService *remy.Service) *mcpserve
 				return mcp.NewToolResultError(err.Error()), nil
 			}
 			proposal, err := repo.CreateCategoryProposal(ctx, store.CategoryProposalPayload{
+				Operation:   request.GetString("operation", "create"),
+				CategoryID:  request.GetString("category_id", ""),
 				Name:        request.GetString("name", ""),
 				Description: request.GetString("description", ""),
 				Attributes:  attributes,
@@ -82,8 +86,8 @@ func New(version string, repo *store.Store, remyService *remy.Service) *mcpserve
 
 	server.AddTool(
 		mcp.NewTool("propose_item_change",
-			mcp.WithDescription("Create a pending proposal for an item create, update, or quantity adjustment. This does not commit data."),
-			mcp.WithString("operation", mcp.Description("create, update, or quantity_adjust.")),
+			mcp.WithDescription("Create a pending proposal for an item create, update, delete, or quantity adjustment. This does not commit data."),
+			mcp.WithString("operation", mcp.Description("create, update, delete, or quantity_adjust.")),
 			mcp.WithString("category_id", mcp.Description("Category ID.")),
 			mcp.WithString("item_id", mcp.Description("Existing item ID for update or quantity_adjust.")),
 			mcp.WithString("title", mcp.Description("Item title.")),
