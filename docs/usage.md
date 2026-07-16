@@ -9,7 +9,6 @@ Start Postgres, then run:
 ```sh
 export DATABASE_URL='postgres://remventory:remventory@localhost:5432/remventory?sslmode=disable'
 export OPENAI_BASE_URL='http://localhost:11434/v1'
-export OPENAI_TINY_MODEL='small-instruct-model'
 export OPENAI_MAIN_MODEL='general-instruct-model'
 export OPENAI_THINKING_MODEL='reasoning-model'
 go run .
@@ -54,7 +53,7 @@ The MCP tool surface includes category reads, category create/update/delete prop
 
 ## Working with Remy
 
-Use the composer to create, update, remove, or browse inventory. Press Enter to send and Shift+Enter for a new line. The **New chat** button clears the visible conversation without changing inventory.
+Use the composer to create, update, remove, or browse inventory. Press Enter to send and Shift+Enter for a new line. Remy's top dialog shows what he is working on and briefly comments on the result. The edit icon starts a fresh chat without changing inventory.
 
 Remy shows category attributes and item values in tables. When proposing an item, it only includes details stated in the request (or already stored on an item being updated); missing details remain blank rather than being guessed. Approve or reject the proposal in the page—rejection does not change inventory.
 

@@ -3,12 +3,15 @@ package remy
 import (
 	"bytes"
 	"context"
+	"embed"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
 	"strings"
+	"sync/atomic"
 	"time"
+	"unicode/utf8"
 
 	"github.com/UnitVectorY-Labs/remventory/internal/agentruntime"
 	"github.com/UnitVectorY-Labs/remventory/internal/agui"
@@ -17,16 +20,33 @@ import (
 	"google.golang.org/adk/agent"
 )
 
+//go:embed prompts/*.txt
+var promptFiles embed.FS
+
+const maxDialogCharacters = 140
+
 type Service struct {
-	cfg    config.Config
-	store  *store.Store
-	client *http.Client
-	agent  agent.Agent
+	cfg            config.Config
+	store          *store.Store
+	client         *http.Client
+	agent          agent.Agent
+	dialogSequence atomic.Uint64
 }
 
 type Request struct {
 	Message string          `json:"message"`
 	Context *VisibleContext `json:"context,omitempty"`
+}
+
+type DialogRequest struct {
+	Phase   string          `json:"phase"`
+	Message string          `json:"message"`
+	Context *VisibleContext `json:"context,omitempty"`
+}
+
+type DialogResponse struct {
+	Icon    string `json:"icon"`
+	Message string `json:"message"`
 }
 
 type Response struct {
@@ -99,8 +119,18 @@ type contextualAnswer struct {
 	Answer string `json:"answer"`
 }
 
-type requestSummary struct {
-	Summary string `json:"summary"`
+var dialogIcons = map[string]bool{
+	"ready": true, "thinking": true, "searching": true,
+	"cataloging": true, "celebrating": true, "error": true,
+}
+
+var dialogVariationHints = []string{
+	"brisk: confident and direct, with no metaphor",
+	"bookish: use one subtle library or catalog image",
+	"playful: add one gentle hamster or librarian flourish",
+	"reassuring: sound calm, capable, and supportive",
+	"tidy: favor language about arranging, sorting, or lining things up",
+	"conversational: sound natural and casual without a catchphrase",
 }
 
 func New(cfg config.Config, repo *store.Store) *Service {
@@ -152,12 +182,8 @@ func (s *Service) Handle(ctx context.Context, req Request) (Response, error) {
 		response, err = s.answerContext(ctx, message, req.Context)
 	default:
 		response = withEvents(Response{
-			State:   "completed",
-			Summary: "I can manage categories and items, then show a clear proposal before any change is saved.",
-			Components: []Component{{
-				Type: "text",
-				Data: "Try “I want to track my LEGO sets”, “add Catan to board games”, “remove the condition attribute from board games”, or “show my board games.”",
-			}},
+			State:      "completed",
+			Components: []Component{},
 		})
 	}
 	if err != nil {
@@ -165,6 +191,105 @@ func (s *Service) Handle(ctx context.Context, req Request) (Response, error) {
 	}
 	response.RequestSummary = s.summarizeRequest(ctx, message)
 	return response, nil
+}
+
+func (s *Service) Dialog(ctx context.Context, req DialogRequest) (DialogResponse, error) {
+	message := strings.TrimSpace(req.Message)
+	if message == "" {
+		return DialogResponse{}, errors.New("message is required")
+	}
+
+	phase := strings.TrimSpace(req.Phase)
+	if phase != "working" && phase != "completed" {
+		return DialogResponse{}, errors.New("phase must be working or completed")
+	}
+
+	fallback := DialogResponse{Icon: "thinking", Message: "I’m taking a look and lining up the next inventory step."}
+	if phase == "completed" {
+		fallback = completedDialogFallback(req.Context)
+	}
+	if !s.modelConfigured(s.cfg.MainModel) {
+		return fallback, nil
+	}
+
+	system, err := promptFiles.ReadFile("prompts/dialog_" + phase + ".txt")
+	if err != nil {
+		return DialogResponse{}, fmt.Errorf("load dialog prompt: %w", err)
+	}
+	variationHint := dialogVariationHints[(s.dialogSequence.Add(1)-1)%uint64(len(dialogVariationHints))]
+	user, err := json.Marshal(map[string]any{
+		"request": message, "visible_interface": req.Context, "variation_hint": variationHint,
+	})
+	if err != nil {
+		return DialogResponse{}, err
+	}
+
+	var response DialogResponse
+	if err := s.completeJSONSchema(ctx, s.cfg.MainModel, string(system), string(user), "remy_dialog", dialogResponseSchema(), &response); err != nil {
+		return fallback, nil
+	}
+	response.Message = enforceDialogLimit(response.Message)
+	if !dialogIcons[response.Icon] {
+		response.Icon = fallback.Icon
+	}
+	if phase == "completed" {
+		expectedIcon := completedDialogIcon(req.Context)
+		if (expectedIcon == "ready" || expectedIcon == "error") && response.Icon != expectedIcon {
+			return fallback, nil
+		}
+		response.Icon = expectedIcon
+	}
+	if response.Message == "" {
+		response.Message = fallback.Message
+	}
+	return response, nil
+}
+
+func completedDialogIcon(visible *VisibleContext) string {
+	if visible != nil && visible.State == "error" {
+		return "error"
+	}
+	if visible == nil || len(visible.Components) == 0 {
+		return "ready"
+	}
+	for _, component := range visible.Components {
+		switch component.Type {
+		case "category_proposal", "item_proposal":
+			var proposal store.Proposal
+			raw, _ := json.Marshal(component.Data)
+			if json.Unmarshal(raw, &proposal) == nil && proposal.Status == "pending" {
+				return "cataloging"
+			}
+			return "celebrating"
+		case "query_result":
+			return "searching"
+		case "category_definition", "item_list", "category_list":
+			return "celebrating"
+		}
+	}
+	return "thinking"
+}
+
+func completedDialogFallback(visible *VisibleContext) DialogResponse {
+	if visible != nil && visible.State == "error" {
+		return DialogResponse{Icon: "error", Message: "I hit a snag while handling that request; try rephrasing it or checking the model connection."}
+	}
+	if visible == nil || len(visible.Components) == 0 {
+		return DialogResponse{Icon: "ready", Message: "I’m best at inventory—try asking me to add, update, find, or organize an item."}
+	}
+	for _, component := range visible.Components {
+		if component.Type == "category_proposal" || component.Type == "item_proposal" {
+			icon := completedDialogIcon(visible)
+			if icon == "celebrating" {
+				return DialogResponse{Icon: icon, Message: "That inventory decision is complete and the result is ready to review."}
+			}
+			return DialogResponse{Icon: icon, Message: "I’ve prepared a proposal for you to review before anything is saved."}
+		}
+		if component.Type == "query_result" {
+			return DialogResponse{Icon: "searching", Message: "I found the inventory details and put them on display."}
+		}
+	}
+	return DialogResponse{Icon: "celebrating", Message: "Your inventory details are ready to explore."}
 }
 
 func (s *Service) planRequest(ctx context.Context, message string, categories []store.Category, visible *VisibleContext) (string, error) {
@@ -187,7 +312,17 @@ Currently visible interface: `+string(contextBytes), message, &plan)
 			return "", fmt.Errorf("ask model to interpret request: %w", err)
 		}
 		switch plan.Action {
-		case "category_change", "category_definition", "item_change", "list_items", "query_inventory", "revise_proposal", "answer_context", "help":
+		case "answer_context":
+			if visible == nil || len(visible.Components) == 0 {
+				return "help", nil
+			}
+			return plan.Action, nil
+		case "revise_proposal":
+			if _, _, err := pendingProposalFromContext(visible); err != nil {
+				return "help", nil
+			}
+			return plan.Action, nil
+		case "category_change", "category_definition", "item_change", "list_items", "query_inventory", "help":
 			return plan.Action, nil
 		default:
 			return "", fmt.Errorf("model returned unsupported action %q", plan.Action)
@@ -270,9 +405,7 @@ Visible interface: `+mustJSON(visible), message, &answer)
 	if err != nil {
 		return Response{}, fmt.Errorf("ask model about visible context: %w", err)
 	}
-	components := make([]Component, 0, len(visible.Components)+1)
-	components = append(components, Component{Type: "text", Data: answer.Answer})
-	components = append(components, visible.Components...)
+	components := append([]Component(nil), visible.Components...)
 	state := visible.State
 	if state == "" {
 		state = "completed"
@@ -297,15 +430,7 @@ func pendingProposalFromContext(visible *VisibleContext) (store.Proposal, string
 }
 
 func (s *Service) summarizeRequest(ctx context.Context, message string) string {
-	if !s.modelConfigured(s.cfg.TinyModel) {
-		return truncate(message, 80)
-	}
-	var summary requestSummary
-	err := s.completeJSON(ctx, s.cfg.TinyModel, `Summarize the user's request as a neutral interface label of at most 10 words. Return only JSON: {"summary":"string"}.`, message, &summary)
-	if err != nil || strings.TrimSpace(summary.Summary) == "" {
-		return truncate(message, 80)
-	}
-	return summary.Summary
+	return truncate(message, 80)
 }
 
 func (s *Service) proposeCategory(ctx context.Context, message string, categories []store.Category) (Response, error) {
@@ -722,17 +847,28 @@ Inventory items: `+string(itemBytes), message, &modelResult)
 }
 
 func (s *Service) completeJSON(ctx context.Context, model, system, user string, target any) error {
+	return s.completeJSONWithFormat(ctx, model, system, user, map[string]any{"type": "json_object"}, 0.2, target)
+}
+
+func (s *Service) completeJSONSchema(ctx context.Context, model, system, user, name string, schema map[string]any, target any) error {
+	return s.completeJSONWithFormat(ctx, model, system, user, map[string]any{
+		"type": "json_schema",
+		"json_schema": map[string]any{
+			"name": name, "strict": true, "schema": schema,
+		},
+	}, 0.7, target)
+}
+
+func (s *Service) completeJSONWithFormat(ctx context.Context, model, system, user string, format map[string]any, temperature float64, target any) error {
 	body := map[string]any{
 		"model": model,
 		"messages": []map[string]string{
 			{"role": "system", "content": system},
 			{"role": "user", "content": user},
 		},
-		"temperature": 0.2,
-		"stream":      false,
-		"response_format": map[string]string{
-			"type": "json_object",
-		},
+		"temperature":     temperature,
+		"stream":          false,
+		"response_format": format,
 	}
 	bodyBytes, err := json.Marshal(body)
 	if err != nil {
@@ -777,6 +913,27 @@ func (s *Service) completeJSON(ctx context.Context, model, system, user string, 
 	content = strings.TrimPrefix(content, "```")
 	content = strings.TrimSuffix(content, "```")
 	return json.Unmarshal([]byte(strings.TrimSpace(content)), target)
+}
+
+func dialogResponseSchema() map[string]any {
+	return map[string]any{
+		"type": "object",
+		"properties": map[string]any{
+			"icon":    map[string]any{"type": "string", "enum": []string{"ready", "thinking", "searching", "cataloging", "celebrating", "error"}},
+			"message": map[string]any{"type": "string", "maxLength": maxDialogCharacters},
+		},
+		"required":             []string{"icon", "message"},
+		"additionalProperties": false,
+	}
+}
+
+func enforceDialogLimit(message string) string {
+	message = strings.Join(strings.Fields(strings.TrimSpace(message)), " ")
+	if utf8.RuneCountInString(message) <= maxDialogCharacters {
+		return message
+	}
+	runes := []rune(message)
+	return strings.TrimSpace(string(runes[:maxDialogCharacters-1])) + "…"
 }
 
 func (s *Service) modelConfigured(model string) bool {

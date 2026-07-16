@@ -46,6 +46,7 @@ func New(opts Options) http.Handler {
 	}
 	mux.HandleFunc("GET /api/config", api.withToken(api.configStatus))
 	mux.HandleFunc("POST /api/remy/request", api.withToken(api.remyRequest))
+	mux.HandleFunc("POST /api/remy/dialog", api.withToken(api.remyDialog))
 	mux.HandleFunc("POST /api/query_inventory", api.withToken(api.queryInventory))
 	mux.HandleFunc("GET /api/categories", api.withToken(api.listCategories))
 	mux.HandleFunc("GET /api/categories/{id}", api.withToken(api.getCategory))
@@ -56,6 +57,24 @@ func New(opts Options) http.Handler {
 	mux.HandleFunc("POST /api/proposals/{id}/decision", api.withToken(api.decideProposal))
 
 	return mux
+}
+
+func (a api) remyDialog(w http.ResponseWriter, r *http.Request) {
+	if a.remy == nil {
+		writeError(w, http.StatusServiceUnavailable, "remy is not configured")
+		return
+	}
+
+	var payload remy.DialogRequest
+	if !decodeJSON(w, r, &payload) {
+		return
+	}
+	response, err := a.remy.Dialog(r.Context(), payload)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, response)
 }
 
 type api struct {

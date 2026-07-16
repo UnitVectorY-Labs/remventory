@@ -3,15 +3,16 @@ const input = document.querySelector("#message");
 const sendButton = document.querySelector("#send-request");
 const newChat = document.querySelector("#new-chat");
 const stage = document.querySelector("#stage");
-const state = document.querySelector("#state");
+const dialog = document.querySelector("#remy-dialog");
 const processing = document.querySelector("#processing");
-const processingMessage = document.querySelector("#processing-message");
 const stopRequest = document.querySelector("#stop-request");
 const configurationWarning = document.querySelector("#configuration-warning");
 const remyAvatar = document.querySelector("#remy-avatar");
 let activeController = null;
 let activeMessage = "";
 let currentResponse = null;
+const minimumWorkingDialogMs = 1800;
+const renderableComponentTypes = new Set(["category_proposal", "item_proposal", "category_definition", "item_list", "query_result", "category_list"]);
 
 showConfigurationStatus();
 
@@ -34,8 +35,8 @@ newChat.addEventListener("click", () => {
   if (activeController) activeController.abort();
   currentResponse = null;
   activeMessage = "";
-  stage.innerHTML = `<div class="empty"><h2>What are we inventorying?</h2><p>Start a fresh conversation with Remy. Nothing shown here has been changed.</p></div>`;
-  setState("Ready");
+  renderEmpty();
+  setDialog({ icon: "ready", message: "Hi, I'm Remy. How can I help you manage your inventory." });
   setRemyImage("ready");
   input.value = "";
   input.focus();
@@ -43,9 +44,8 @@ newChat.addEventListener("click", () => {
 
 stopRequest.addEventListener("click", () => {
   if (!activeController) return;
-  setState("Stopping");
   stopRequest.disabled = true;
-  processingMessage.textContent = "Stopping Remy’s request";
+  setDialog({ icon: "thinking", message: "I’m stopping here and putting your request back in the composer." });
   activeController.abort();
 });
 
@@ -60,18 +60,24 @@ async function askRemy(message) {
   activeMessage = message;
   const context = visibleContext(currentResponse);
   setWorking(message);
+  let workingDialogShownAt = 0;
   try {
+    const workingDialog = await fetchDialog("working", message, context, activeController.signal);
+    setDialog(workingDialog || { icon: "thinking", message: "I’m on it—let me check the inventory details." });
+    workingDialogShownAt = Date.now();
     const response = await api("/api/remy/request", {
       method: "POST",
       body: JSON.stringify({ message, context }),
       signal: activeController.signal,
     });
+    if (!bodyContentChanged(context, response)) return;
     renderResponse(response);
+    const completedDialog = await fetchDialog("completed", message, visibleContext(response), activeController.signal);
+    await waitForWorkingDialog(workingDialogShownAt, activeController.signal);
+    setDialog(completedDialog || completionFallback(response));
   } catch (error) {
     if (error.name === "AbortError") {
       renderStopped();
-    } else {
-      renderError(error);
     }
   } finally {
     clearWorking();
@@ -102,27 +108,29 @@ async function showConfigurationStatus() {
 
 function renderResponse(response) {
   currentResponse = response;
-  setState(response.state === "proposing" ? "Review" : "Ready");
-  setRemyImage(response.state === "proposing" ? "cataloging" : "celebrating");
   stage.innerHTML = "";
-  if (response.request_summary) {
-    const requestSummary = document.createElement("p");
-    requestSummary.className = "request-summary";
-    requestSummary.textContent = response.request_summary;
-    stage.append(requestSummary);
+  let displayed = 0;
+  for (const component of response.components || []) {
+    const rendered = renderComponent(component);
+    if (rendered) {
+      stage.append(rendered);
+      displayed += 1;
+    }
   }
-  if (response.summary) {
-    const summary = document.createElement("p");
-    summary.className = "summary";
-    summary.textContent = response.summary;
-    stage.append(summary);
-  }
-  for (const component of response.components || []) stage.append(renderComponent(component));
+  if (!displayed) renderEmpty();
 }
 
 function visibleContext(response) {
   if (!response) return null;
   return { state: response.state, summary: response.summary, request_summary: response.request_summary, components: response.components || [] };
+}
+
+function bodyContentChanged(before, after) {
+  return JSON.stringify(bodyComponents(before)) !== JSON.stringify(bodyComponents(after));
+}
+
+function bodyComponents(response) {
+  return (response?.components || []).filter((component) => renderableComponentTypes.has(component.type));
 }
 
 function renderComponent(component) {
@@ -133,8 +141,8 @@ function renderComponent(component) {
     case "item_list": return itemList(component.data);
     case "query_result": return queryResult(component.data);
     case "category_list": return categoryList(component.data);
-    case "text": return textCard(component.data);
-    default: return textCard("Remy returned a result that this version cannot display yet.");
+    case "text": return null;
+    default: return null;
   }
 }
 
@@ -181,19 +189,35 @@ function proposalCard(proposal, title) {
 }
 
 async function decide(id, approve) {
-  setState("Saving");
+  if (activeController) return;
+  activeController = new AbortController();
+  activeMessage = approve ? "Approve this proposal" : "Reject this proposal";
+  const context = visibleContext(currentResponse);
+  setWorking(activeMessage);
+  let workingDialogShownAt = 0;
   try {
+    const workingDialog = await fetchDialog("working", activeMessage, context, activeController.signal);
+    setDialog(workingDialog || { icon: "thinking", message: "I’m handling that inventory decision now." });
+    workingDialogShownAt = Date.now();
     const proposal = await api(`/api/proposals/${id}/decision`, {
       method: "POST",
       body: JSON.stringify({ approve, reason: "" }),
+      signal: activeController.signal,
     });
-    renderResponse({
+    const response = {
       state: "completed",
       summary: approve ? "Changes approved and saved." : "Proposal rejected. No inventory data was changed.",
       components: [{ type: proposal.type === "category_create" ? "category_proposal" : "item_proposal", data: proposal }],
-    });
+    };
+    if (!bodyContentChanged(context, response)) return;
+    renderResponse(response);
+    const completedDialog = await fetchDialog("completed", activeMessage, visibleContext(response), activeController.signal);
+    await waitForWorkingDialog(workingDialogShownAt, activeController.signal);
+    setDialog(completedDialog || completionFallback(response));
   } catch (error) {
-    renderError(error);
+    if (error.name === "AbortError") renderStopped();
+  } finally {
+    clearWorking();
   }
 }
 
@@ -329,41 +353,82 @@ function appendDetail(list, label, value) {
   list.append(term, detail);
 }
 
-function renderError(error) {
-  setState("Needs attention");
-  setRemyImage("error");
-  stage.innerHTML = "";
-  stage.append(textCard(error.message));
-}
-
 function renderStopped() {
-  setState("Ready");
-  setRemyImage("ready");
+  setDialog({ icon: "ready", message: "Stopped—your request is back in the composer whenever you’re ready." });
   input.value = activeMessage;
-  processingMessage.textContent = "Request stopped. Your message is back in the composer.";
 }
-
-function setState(value) { state.textContent = value; }
 
 function setWorking(message) {
-  setState("Working");
-  const lower = message.toLowerCase();
-  setRemyImage(lower.includes("show") || lower.includes("list") || lower.includes("have") ? "searching" : "thinking");
   input.disabled = true;
-  input.classList.add("submitted");
   sendButton.disabled = true;
-  sendButton.textContent = "Sent";
+  form.hidden = true;
   processing.hidden = false;
   stopRequest.disabled = false;
-  processingMessage.textContent = `Remy is working on: ${message}`;
+}
+
+async function fetchDialog(phase, message, context, signal) {
+  try {
+    return await api("/api/remy/dialog", {
+      method: "POST",
+      body: JSON.stringify({ phase, message, context }),
+      signal,
+    });
+  } catch (error) {
+    if (error.name === "AbortError") throw error;
+    return null;
+  }
+}
+
+async function waitForWorkingDialog(shownAt, signal) {
+  if (!shownAt) return;
+  const remaining = minimumWorkingDialogMs - (Date.now() - shownAt);
+  if (remaining <= 0) return;
+  await abortableDelay(remaining, signal);
+}
+
+function abortableDelay(milliseconds, signal) {
+  return new Promise((resolve, reject) => {
+    const timer = window.setTimeout(() => {
+      signal?.removeEventListener("abort", abort);
+      resolve();
+    }, milliseconds);
+    const abort = () => {
+      window.clearTimeout(timer);
+      const error = new Error("Request stopped");
+      error.name = "AbortError";
+      reject(error);
+    };
+    if (signal?.aborted) abort();
+    else signal?.addEventListener("abort", abort, { once: true });
+  });
+}
+
+function completionFallback(response) {
+  if (response?.state === "error") return { icon: "error", message: "I hit a snag while handling that request." };
+  if (!(response?.components || []).length) return { icon: "ready", message: "I’m best at inventory—try asking me to add, update, find, or organize an item." };
+  return { icon: response.state === "proposing" ? "cataloging" : "celebrating", message: "Your inventory details are ready to review." };
+}
+
+function setDialog(response) {
+  const icon = ["ready", "thinking", "searching", "cataloging", "celebrating", "error"].includes(response.icon) ? response.icon : "ready";
+  dialog.textContent = truncateDialog(response.message || "Hi, I'm Remy. How can I help you manage your inventory.");
+  setRemyImage(icon);
+}
+
+function truncateDialog(message) {
+  const characters = Array.from(String(message).trim().replace(/\s+/g, " "));
+  return characters.length <= 140 ? characters.join("") : `${characters.slice(0, 139).join("").trim()}…`;
+}
+
+function renderEmpty() {
+  stage.innerHTML = `<div class="empty"><h2>Your inventory workspace</h2><p>Inventory details, search results, and proposals will appear here.</p></div>`;
 }
 
 function clearWorking() {
   activeController = null;
   input.disabled = false;
-  input.classList.remove("submitted");
   sendButton.disabled = false;
-  sendButton.textContent = "Send";
+  form.hidden = false;
   processing.hidden = true;
   input.focus();
 }
