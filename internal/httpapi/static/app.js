@@ -234,9 +234,18 @@ function categoryDefinition(category) {
 function queryResult(data) {
   const card = document.createElement("article");
   card.className = "card";
-  card.innerHTML = `<div class="card-heading"><div><p class="eyebrow">Inventory check</p><h2>${escapeHTML(data.category?.name || "Inventory")}</h2></div></div><p class="summary">${escapeHTML(data.summary || "")}</p>`;
+  const categories = (data.categories || []).length ? data.categories : (data.category?.id ? [data.category] : []);
+  const heading = categories.length > 1 ? `Across ${categories.length} collections` : (categories[0]?.name || "Inventory");
+  card.innerHTML = `<div class="card-heading"><div><p class="eyebrow">Inventory check</p><h2>${escapeHTML(heading)}</h2></div></div><p class="summary">${escapeHTML(data.summary || "")}</p>`;
   const matches = data.matches || [];
-  if (matches.length) card.append(itemsTable(matches, data.category || {}, "Matching items"));
+  if (matches.length && categories.length > 1) {
+    for (const category of categories) {
+      const categoryMatches = matches.filter((item) => item.category_id === category.id);
+      if (categoryMatches.length) card.append(itemsTable(categoryMatches, category, category.name || "Matching items"));
+    }
+  } else if (matches.length) {
+    card.append(itemsTable(matches, categories[0] || data.category || {}, "Matching items"));
+  }
   return card;
 }
 

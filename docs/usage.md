@@ -57,6 +57,8 @@ Use the composer to create, update, remove, or browse inventory. Press Enter to 
 
 Remy shows category attributes and item values in tables. When proposing an item, it only includes details stated in the request (or already stored on an item being updated); missing details remain blank rather than being guessed. Approve or reject the proposal in the page—rejection does not change inventory.
 
+Inventory questions without an explicit category search across every relevant collection and group matching items by collection. Supplying a category to the query API or MCP tool keeps the search scoped to that category.
+
 ## Prototype Proposal Flow
 
 Data-changing actions are represented as proposals first. To propose a category:

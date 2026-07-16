@@ -144,6 +144,59 @@ func TestSelectCategoryUsesModelWhenNameIsNotInRequest(t *testing.T) {
 	}
 }
 
+func TestSelectQueryCategoriesAllowsMultipleCollections(t *testing.T) {
+	service := New(config.Config{OpenAIBaseURL: "http://model.test/v1", MainModel: "main-model"}, nil)
+	service.client = jsonResponseClient(t, `{"category_ids":["video-games-id","nes-games-id"]}`)
+	categories := []store.Category{
+		{ID: "lego-id", Name: "LEGO Sets"},
+		{ID: "video-games-id", Name: "My Video Games"},
+		{ID: "nes-games-id", Name: "NES Games"},
+	}
+
+	selected, err := service.selectQueryCategories(context.Background(), "What Mario games do I have?", categories)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(selected) != 2 || selected[0].ID != "video-games-id" || selected[1].ID != "nes-games-id" {
+		t.Fatalf("selected = %#v, want both game collections", selected)
+	}
+}
+
+func TestSelectQueryCategoriesFallsBackToAllCollections(t *testing.T) {
+	service := New(config.Config{}, nil)
+	categories := []store.Category{{ID: "one"}, {ID: "two"}}
+
+	selected, err := service.selectQueryCategories(context.Background(), "Find anything Mario-related", categories)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(selected) != len(categories) {
+		t.Fatalf("selected = %#v, want every collection without model routing", selected)
+	}
+}
+
+func TestQueryResultAcrossCategoriesPreservesEveryMatchedCollection(t *testing.T) {
+	categories := []store.Category{{ID: "video-games-id"}, {ID: "nes-games-id"}}
+	items := []store.Item{
+		{ID: "wonder-id", CategoryID: "video-games-id", Title: "Super Mario Bros. Wonder"},
+		{ID: "smb-id", CategoryID: "nes-games-id", Title: "Super Mario Bros"},
+		{ID: "duck-hunt-id", CategoryID: "nes-games-id", Title: "Duck Hunt"},
+	}
+	result := queryResultFromModelAcrossCategories(modelQueryResult{
+		Judgment:       "yes",
+		Confidence:     "high",
+		Summary:        "Found two Mario games.",
+		MatchedItemIDs: []string{"wonder-id", "smb-id"},
+	}, categories, items)
+
+	if len(result.Categories) != 2 || len(result.Matches) != 2 {
+		t.Fatalf("result = %#v, want two categories and two matches", result)
+	}
+	if result.Matches[0].CategoryID == result.Matches[1].CategoryID {
+		t.Fatalf("matches = %#v, want matches from different categories", result.Matches)
+	}
+}
+
 func TestPendingProposalFromVisibleContext(t *testing.T) {
 	visible := &VisibleContext{Components: []Component{{
 		Type: "item_proposal",

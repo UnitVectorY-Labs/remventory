@@ -87,11 +87,12 @@ type itemDraft struct {
 }
 
 type QueryResult struct {
-	Judgment   string         `json:"judgment"`
-	Confidence string         `json:"confidence,omitempty"`
-	Summary    string         `json:"summary"`
-	Category   store.Category `json:"category"`
-	Matches    []store.Item   `json:"matches"`
+	Judgment   string           `json:"judgment"`
+	Confidence string           `json:"confidence,omitempty"`
+	Summary    string           `json:"summary"`
+	Category   *store.Category  `json:"category,omitempty"`
+	Categories []store.Category `json:"categories,omitempty"`
+	Matches    []store.Item     `json:"matches"`
 }
 
 type modelQueryResult struct {
@@ -107,6 +108,10 @@ type requestPlan struct {
 
 type categorySelection struct {
 	CategoryID string `json:"category_id"`
+}
+
+type queryCategorySelection struct {
+	CategoryIDs []string `json:"category_ids"`
 }
 
 type proposalRevision struct {
@@ -654,45 +659,40 @@ func (s *Service) QueryInventory(ctx context.Context, message string, categoryID
 		return QueryResult{}, err
 	}
 
-	var category *store.Category
+	selected := make([]store.Category, 0, 1)
 	if categoryID != "" {
 		for i := range categories {
 			if categories[i].ID == categoryID {
-				category = &categories[i]
+				selected = append(selected, categories[i])
 				break
 			}
 		}
 	} else {
-		category, err = s.selectCategory(ctx, message, categories)
+		selected, err = s.selectQueryCategories(ctx, message, categories)
 		if err != nil {
 			return QueryResult{}, err
 		}
 	}
-	if category == nil {
+	if len(selected) == 0 {
 		return QueryResult{
 			Judgment: "uncertain",
-			Summary:  "I could not confidently choose a category for this query.",
+			Summary:  "I could not find an inventory collection to search.",
 		}, nil
 	}
 
-	items, err := s.store.ListItems(ctx, category.ID, 500, 0)
-	if err != nil {
-		return QueryResult{}, err
+	items := make([]store.Item, 0)
+	for _, category := range selected {
+		categoryItems, err := s.store.ListItems(ctx, category.ID, 500, 0)
+		if err != nil {
+			return QueryResult{}, err
+		}
+		items = append(items, categoryItems...)
 	}
-	return s.matchExistingItem(ctx, message, *category, items, message)
+	return s.matchInventory(ctx, message, selected, items)
 }
 
-func (s *Service) queryInventory(ctx context.Context, message string, categories []store.Category) (Response, error) {
-	category, err := s.selectCategory(ctx, message, categories)
-	if err != nil {
-		return Response{}, err
-	}
-	categoryID := ""
-	if category != nil {
-		categoryID = category.ID
-	}
-
-	result, err := s.QueryInventory(ctx, message, categoryID)
+func (s *Service) queryInventory(ctx context.Context, message string, _ []store.Category) (Response, error) {
+	result, err := s.QueryInventory(ctx, message, "")
 	if err != nil {
 		return Response{}, err
 	}
@@ -705,6 +705,40 @@ func (s *Service) queryInventory(ctx context.Context, message string, categories
 			Data: result,
 		}},
 	}), nil
+}
+
+func (s *Service) selectQueryCategories(ctx context.Context, message string, categories []store.Category) ([]store.Category, error) {
+	if len(categories) == 0 {
+		return nil, nil
+	}
+	if !s.modelConfigured(s.cfg.MainModel) {
+		return categories, nil
+	}
+
+	categoryBytes, _ := json.Marshal(categories)
+	var selection queryCategorySelection
+	err := s.completeJSON(ctx, s.cfg.MainModel, `Choose every inventory category that could reasonably contain answers to the request and return only JSON.
+Schema: {"category_ids":["uuid"]}
+Use only ids from the provided categories. A request may span multiple collections with overlapping subject matter, so do not force it into one category. Include every plausible category and let the inventory query decide which items match. Return an empty list only when none of the categories could contain a useful answer.
+Categories: `+string(categoryBytes), message, &selection)
+	if err != nil {
+		return nil, fmt.Errorf("ask model to choose query categories: %w", err)
+	}
+
+	selectedIDs := make(map[string]bool, len(selection.CategoryIDs))
+	for _, id := range selection.CategoryIDs {
+		selectedIDs[id] = true
+	}
+	selected := make([]store.Category, 0, len(selectedIDs))
+	for _, category := range categories {
+		if selectedIDs[category.ID] {
+			selected = append(selected, category)
+		}
+	}
+	if len(selected) == 0 {
+		return categories, nil
+	}
+	return selected, nil
 }
 
 func (s *Service) selectCategory(ctx context.Context, message string, categories []store.Category) (*store.Category, error) {
@@ -804,7 +838,7 @@ func (s *Service) matchExistingItem(ctx context.Context, message string, categor
 		return QueryResult{
 			Judgment: "no",
 			Summary:  "No matching items are in this category yet.",
-			Category: category,
+			Category: &category,
 			Matches:  nil,
 		}, nil
 	}
@@ -841,9 +875,47 @@ Inventory items: `+string(itemBytes), message, &modelResult)
 		Judgment:   judgment,
 		Confidence: confidence,
 		Summary:    summary,
-		Category:   category,
+		Category:   &category,
 		Matches:    matches,
 	}, nil
+}
+
+func (s *Service) matchInventory(ctx context.Context, message string, categories []store.Category, items []store.Item) (QueryResult, error) {
+	result := QueryResult{Categories: categories, Matches: nil}
+	if len(categories) == 1 {
+		result.Category = &categories[0]
+	}
+	if len(items) == 0 {
+		result.Judgment = "no"
+		result.Summary = "No matching items are in the relevant collections yet."
+		return result, nil
+	}
+
+	if s.modelConfigured(s.cfg.ThinkingModel) {
+		var modelResult modelQueryResult
+		contextBytes, _ := json.Marshal(map[string]any{"categories": categories, "items": items})
+		err := s.completeJSON(ctx, s.cfg.ThinkingModel, `Return only JSON for an inventory query across all provided collections.
+Schema:
+{"judgment":"yes|no|uncertain","confidence":"low|medium|high","summary":"string","matched_item_ids":["string"]}
+Answer the user's open-ended question from the combined inventory evidence. Consider every provided collection, not just one. Include every item that answers the question, even when matching items belong to different categories. Use yes only when the inventory clearly contains matching items, uncertain for likely variants or partial matches, and no when none match.
+Inventory context: `+string(contextBytes), message, &modelResult)
+		if err == nil && validJudgment(modelResult.Judgment) {
+			result = queryResultFromModelAcrossCategories(modelResult, categories, items)
+			return result, nil
+		}
+	}
+
+	matches := fallbackMatches(message, items)
+	result.Judgment = "no"
+	result.Confidence = "medium"
+	result.Summary = "No matching item appears to be in the relevant collections."
+	if len(matches) > 0 {
+		result.Judgment = "uncertain"
+		result.Confidence = "low"
+		result.Summary = "Found possible matching items across the relevant collections."
+		result.Matches = matches
+	}
+	return result, nil
 }
 
 func (s *Service) completeJSON(ctx context.Context, model, system, user string, target any) error {
@@ -1241,9 +1313,19 @@ func queryResultFromModel(modelResult modelQueryResult, category store.Category,
 		Judgment:   modelResult.Judgment,
 		Confidence: modelResult.Confidence,
 		Summary:    modelResult.Summary,
-		Category:   category,
+		Category:   &category,
 		Matches:    matches,
 	}
+}
+
+func queryResultFromModelAcrossCategories(modelResult modelQueryResult, categories []store.Category, items []store.Item) QueryResult {
+	result := queryResultFromModel(modelResult, store.Category{}, items)
+	result.Category = nil
+	result.Categories = categories
+	if len(categories) == 1 {
+		result.Category = &categories[0]
+	}
+	return result
 }
 
 func defaultQuerySummary(judgment string, matchCount int) string {
