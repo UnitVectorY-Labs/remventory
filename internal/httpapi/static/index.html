@@ -10,7 +10,7 @@
     <main class="shell">
       <section class="workspace">
         <header class="remy-panel">
-          <img id="remy-avatar" class="remy-avatar" src="/static/remy-ready.svg" alt="Remy the hamster librarian is ready">
+          <img id="remy-avatar" class="remy-avatar" src="/static/remy-ready.svg" alt="Remy is ready">
           <div class="remy-dialog" role="status" aria-live="polite" aria-atomic="true">
             <p id="remy-dialog">Hi, I'm Remy. How can I help you manage your inventory.</p>
           </div>
@@ -31,21 +31,21 @@
         <div class="request-controls">
           <form id="remy-form" class="composer">
             <textarea id="message" name="message" rows="2" placeholder="Ask Remy about your inventory" aria-label="Message Remy" required></textarea>
+            <div id="submitted-message" class="submitted-message" role="status" aria-label="Submitted request" hidden></div>
             <div class="composer-actions">
-              <p>Enter to send · Shift+Enter for a new line</p>
-              <button id="send-request" type="submit">
-                <span>Send</span>
-                <svg class="icon icon-tabler" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 19V5"/><path d="m5 12 7-7 7 7"/></svg>
-              </button>
+              <p id="composer-hint">Enter to send · Shift+Enter for a new line</p>
+              <div class="request-action-slot">
+                <button id="send-request" type="submit">
+                  <span>Send</span>
+                  <svg class="icon icon-tabler" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 19V5"/><path d="m5 12 7-7 7 7"/></svg>
+                </button>
+                <button id="stop-request" class="danger" type="button" hidden>
+                  <svg class="icon icon-tabler" viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="5" width="14" height="14" rx="2"/></svg>
+                  <span>Stop</span>
+                </button>
+              </div>
             </div>
           </form>
-
-          <section id="processing" class="processing" aria-label="Remy is working" hidden>
-            <button id="stop-request" class="danger" type="button">
-              <svg class="icon icon-tabler" viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="5" width="14" height="14" rx="2"/></svg>
-              <span>Stop</span>
-            </button>
-          </section>
         </div>
       </section>
     </main>

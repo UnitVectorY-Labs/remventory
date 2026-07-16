@@ -1,5 +1,5 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 240 240" role="img" aria-labelledby="title desc">
-  <title id="title">Remy searching</title><desc id="desc">A hamster librarian searching the catalog with a magnifying glass.</desc>
+  <title id="title">Remy searching</title><desc id="desc">A hamster inventory assistant searching item details with a magnifying glass.</desc>
   <rect width="240" height="240" rx="36" fill="#eaf2f5"/>
   <circle cx="73" cy="66" r="29" fill="#c9824b" stroke="#593a2b" stroke-width="6"/><circle cx="167" cy="66" r="29" fill="#c9824b" stroke="#593a2b" stroke-width="6"/><circle cx="73" cy="66" r="15" fill="#f2b99a"/><circle cx="167" cy="66" r="15" fill="#f2b99a"/>
   <ellipse cx="120" cy="123" rx="77" ry="78" fill="#d99459" stroke="#593a2b" stroke-width="7"/><ellipse cx="120" cy="142" rx="52" ry="48" fill="#f1c397"/>

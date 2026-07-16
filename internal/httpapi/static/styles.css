@@ -58,7 +58,6 @@ textarea {
 
 .remy-panel,
 .composer,
-.processing,
 .configuration-warning,
 .card,
 .empty {
@@ -355,10 +354,6 @@ th {
   filter: drop-shadow(0 8px 18px rgb(29 36 48 / 12%));
 }
 
-.composer[hidden] {
-  display: none;
-}
-
 .composer-actions {
   display: flex;
   align-items: center;
@@ -366,8 +361,7 @@ th {
   gap: 12px;
 }
 
-.composer-actions button,
-.processing button {
+.composer-actions button {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -380,23 +374,50 @@ th {
   font-size: 0.78rem;
 }
 
-.processing {
-  display: flex;
-  justify-content: flex-end;
-  padding: 10px;
-}
-
-.processing[hidden] {
-  display: none;
-}
-
-.composer textarea {
+.composer textarea,
+.submitted-message {
   min-width: 0;
+  min-height: 64px;
   border: 1px solid var(--line);
   border-radius: 8px;
   padding: 12px 14px;
+}
+
+.composer textarea {
+  display: block;
+  width: 100%;
   outline-color: var(--accent);
   resize: vertical;
+}
+
+.composer textarea[hidden] {
+  display: none;
+}
+
+.submitted-message {
+  display: flex;
+  align-items: center;
+  overflow-wrap: anywhere;
+  background: #f3f5f7;
+  color: var(--ink);
+  white-space: pre-wrap;
+}
+
+.submitted-message[hidden] {
+  display: none;
+}
+
+.request-action-slot {
+  width: 100px;
+  flex: 0 0 100px;
+}
+
+.request-action-slot button {
+  width: 100%;
+}
+
+.request-action-slot button[hidden] {
+  display: none;
 }
 
 button {
@@ -450,13 +471,17 @@ pre {
 }
 
 @media (max-width: 680px) {
+  body {
+    min-height: 100dvh;
+  }
+
   .shell {
     padding: 12px;
   }
 
   .workspace {
-    min-height: calc(100dvh - 24px);
-    grid-template-rows: auto auto minmax(0, 1fr);
+    display: block;
+    min-height: 0;
   }
 
   .remy-panel {
@@ -489,15 +514,12 @@ pre {
   }
 
   .stage {
+    margin-top: 14px;
     padding-bottom: 136px;
   }
 
-  .processing {
-    display: block;
-  }
-
-  .processing button {
-    width: 100%;
+  .configuration-warning {
+    margin-top: 14px;
   }
 
   table {

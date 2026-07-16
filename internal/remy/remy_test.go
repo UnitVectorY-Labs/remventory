@@ -212,7 +212,7 @@ func TestDialogPromptsRequireFirstPersonExamplesAndVariation(t *testing.T) {
 				t.Fatal(err)
 			}
 			prompt := string(raw)
-			for _, required := range []string{"first person", "GOOD EXAMPLES", "BAD EXAMPLES", "not templates", "Vary the opening"} {
+			for _, required := range []string{"first person", "GOOD EXAMPLES", "BAD EXAMPLES", "not templates", "Vary the opening", "organized, patient, and helpful", "Do not use the word \"quietly\""} {
 				if !strings.Contains(prompt, required) {
 					t.Fatalf("prompt is missing %q", required)
 				}
@@ -230,6 +230,16 @@ func TestDialogFallbackGuidesUnrelatedRequest(t *testing.T) {
 	}
 	if dialog.Icon != "ready" || !strings.Contains(dialog.Message, "inventory") {
 		t.Fatalf("dialog = %#v, want ready inventory guidance", dialog)
+	}
+}
+
+func TestCompletedDialogFallbackKeepsRemysFirstPersonVoice(t *testing.T) {
+	dialog := completedDialogFallback(&VisibleContext{
+		State:      "completed",
+		Components: []Component{{Type: "category_list", Data: []any{}}},
+	})
+	if !strings.Contains(dialog.Message, "I’ve") {
+		t.Fatalf("dialog = %#v, want first-person fallback", dialog)
 	}
 }
 

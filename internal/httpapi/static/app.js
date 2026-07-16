@@ -4,8 +4,9 @@ const sendButton = document.querySelector("#send-request");
 const newChat = document.querySelector("#new-chat");
 const stage = document.querySelector("#stage");
 const dialog = document.querySelector("#remy-dialog");
-const processing = document.querySelector("#processing");
 const stopRequest = document.querySelector("#stop-request");
+const submittedMessage = document.querySelector("#submitted-message");
+const composerHint = document.querySelector("#composer-hint");
 const configurationWarning = document.querySelector("#configuration-warning");
 const remyAvatar = document.querySelector("#remy-avatar");
 let activeController = null;
@@ -361,8 +362,12 @@ function renderStopped() {
 function setWorking(message) {
   input.disabled = true;
   sendButton.disabled = true;
-  form.hidden = true;
-  processing.hidden = false;
+  input.hidden = true;
+  submittedMessage.textContent = message;
+  submittedMessage.hidden = false;
+  composerHint.textContent = "Remy is working on this request";
+  sendButton.hidden = true;
+  stopRequest.hidden = false;
   stopRequest.disabled = false;
 }
 
@@ -406,7 +411,7 @@ function abortableDelay(milliseconds, signal) {
 function completionFallback(response) {
   if (response?.state === "error") return { icon: "error", message: "I hit a snag while handling that request." };
   if (!(response?.components || []).length) return { icon: "ready", message: "I’m best at inventory—try asking me to add, update, find, or organize an item." };
-  return { icon: response.state === "proposing" ? "cataloging" : "celebrating", message: "Your inventory details are ready to review." };
+  return { icon: response.state === "proposing" ? "cataloging" : "celebrating", message: "I’ve put your inventory details in view and ready to review." };
 }
 
 function setDialog(response) {
@@ -428,13 +433,17 @@ function clearWorking() {
   activeController = null;
   input.disabled = false;
   sendButton.disabled = false;
-  form.hidden = false;
-  processing.hidden = true;
+  submittedMessage.hidden = true;
+  submittedMessage.textContent = "";
+  input.hidden = false;
+  composerHint.textContent = "Enter to send · Shift+Enter for a new line";
+  stopRequest.hidden = true;
+  sendButton.hidden = false;
   input.focus();
 }
 
 function setRemyImage(stateName) {
-  const labels = { ready: "Remy the hamster librarian is ready", thinking: "Remy the hamster librarian is thinking", searching: "Remy the hamster librarian is searching the catalog", cataloging: "Remy the hamster librarian is preparing an inventory proposal", celebrating: "Remy the hamster librarian is ready for the next request", error: "Remy the hamster librarian needs help" };
+  const labels = { ready: "Remy is ready", thinking: "Remy is thinking", searching: "Remy is searching the inventory", cataloging: "Remy is preparing an inventory proposal", celebrating: "Remy is ready for the next request", error: "Remy needs help" };
   remyAvatar.src = `/static/remy-${stateName}.svg`;
   remyAvatar.alt = labels[stateName] || labels.ready;
 }

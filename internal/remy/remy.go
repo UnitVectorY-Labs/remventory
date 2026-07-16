@@ -126,8 +126,8 @@ var dialogIcons = map[string]bool{
 
 var dialogVariationHints = []string{
 	"brisk: confident and direct, with no metaphor",
-	"bookish: use one subtle library or catalog image",
-	"playful: add one gentle hamster or librarian flourish",
+	"specific: mention one concrete detail from the request or visible result",
+	"playful: add one small, unexpected turn of phrase without a pun",
 	"reassuring: sound calm, capable, and supportive",
 	"tidy: favor language about arranging, sorting, or lining things up",
 	"conversational: sound natural and casual without a catchphrase",
@@ -281,7 +281,7 @@ func completedDialogFallback(visible *VisibleContext) DialogResponse {
 		if component.Type == "category_proposal" || component.Type == "item_proposal" {
 			icon := completedDialogIcon(visible)
 			if icon == "celebrating" {
-				return DialogResponse{Icon: icon, Message: "That inventory decision is complete and the result is ready to review."}
+				return DialogResponse{Icon: icon, Message: "I’ve completed that inventory decision and put the result in view."}
 			}
 			return DialogResponse{Icon: icon, Message: "I’ve prepared a proposal for you to review before anything is saved."}
 		}
@@ -289,7 +289,7 @@ func completedDialogFallback(visible *VisibleContext) DialogResponse {
 			return DialogResponse{Icon: "searching", Message: "I found the inventory details and put them on display."}
 		}
 	}
-	return DialogResponse{Icon: "celebrating", Message: "Your inventory details are ready to explore."}
+	return DialogResponse{Icon: "celebrating", Message: "I’ve put your inventory details in view and ready to explore."}
 }
 
 func (s *Service) planRequest(ctx context.Context, message string, categories []store.Category, visible *VisibleContext) (string, error) {
