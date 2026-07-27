@@ -4,12 +4,15 @@ import (
 	"embed"
 	"encoding/json"
 	"errors"
+	"io"
 	"io/fs"
 	"log/slog"
+	"mime"
 	"net/http"
 	"strconv"
 
 	"github.com/UnitVectorY-Labs/remventory/internal/config"
+	"github.com/UnitVectorY-Labs/remventory/internal/itemimages"
 	"github.com/UnitVectorY-Labs/remventory/internal/remy"
 	"github.com/UnitVectorY-Labs/remventory/internal/store"
 )
@@ -24,6 +27,7 @@ type Options struct {
 	MCPHandler http.Handler
 	Version    string
 	Logger     *slog.Logger
+	Images     itemimages.ObjectStore
 }
 
 func New(opts Options) http.Handler {
@@ -34,6 +38,7 @@ func New(opts Options) http.Handler {
 		remy:    opts.Remy,
 		version: opts.Version,
 		logger:  opts.Logger,
+		images:  opts.Images,
 	}
 
 	mux.HandleFunc("GET /healthz", api.health)
@@ -51,6 +56,9 @@ func New(opts Options) http.Handler {
 	mux.HandleFunc("GET /api/categories", api.withToken(api.listCategories))
 	mux.HandleFunc("GET /api/categories/{id}", api.withToken(api.getCategory))
 	mux.HandleFunc("GET /api/items", api.withToken(api.listItems))
+	mux.HandleFunc("GET /api/items/{id}", api.withToken(api.getItem))
+	mux.HandleFunc("POST /api/items/{id}/images", api.withToken(api.uploadItemImage))
+	mux.HandleFunc("GET /api/images/{id}/{variant}", api.serveItemImage)
 	mux.HandleFunc("POST /api/proposals/category", api.withToken(api.createCategoryProposal))
 	mux.HandleFunc("POST /api/proposals/item", api.withToken(api.createItemProposal))
 	mux.HandleFunc("GET /api/proposals/{id}", api.withToken(api.getProposal))
@@ -83,6 +91,7 @@ type api struct {
 	remy    *remy.Service
 	version string
 	logger  *slog.Logger
+	images  itemimages.ObjectStore
 }
 
 func staticFS() fs.FS {
@@ -253,6 +262,9 @@ func (a api) listItems(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "list items")
 		return
 	}
+	for i := range items {
+		setImageURLs(items[i].Images)
+	}
 
 	writeJSON(w, http.StatusOK, map[string]any{
 		"items":       items,
@@ -260,6 +272,125 @@ func (a api) listItems(w http.ResponseWriter, r *http.Request) {
 		"limit":       limit,
 		"offset":      offset,
 	})
+}
+
+func (a api) getItem(w http.ResponseWriter, r *http.Request) {
+	if a.store == nil {
+		writeError(w, http.StatusServiceUnavailable, "database is not configured")
+		return
+	}
+	item, err := a.store.GetItem(r.Context(), r.PathValue("id"))
+	if errors.Is(err, store.ErrNotFound) {
+		writeError(w, http.StatusNotFound, "item not found")
+		return
+	}
+	if err != nil {
+		a.logger.Error("get item", "error", err)
+		writeError(w, http.StatusInternalServerError, "get item")
+		return
+	}
+	setImageURLs(item.Images)
+	writeJSON(w, http.StatusOK, item)
+}
+
+func (a api) uploadItemImage(w http.ResponseWriter, r *http.Request) {
+	if a.store == nil || a.images == nil {
+		writeError(w, http.StatusServiceUnavailable, "image storage is not configured")
+		return
+	}
+	item, err := a.store.GetItem(r.Context(), r.PathValue("id"))
+	if errors.Is(err, store.ErrNotFound) {
+		writeError(w, http.StatusNotFound, "item not found")
+		return
+	}
+	if err != nil {
+		a.logger.Error("get item for image upload", "error", err)
+		writeError(w, http.StatusInternalServerError, "get item")
+		return
+	}
+	if len(item.Images) > 0 {
+		writeError(w, http.StatusConflict, "this item already has a picture")
+		return
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, itemimages.MaxUploadBytes+(1<<20))
+	file, header, err := r.FormFile("image")
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "select an image to upload")
+		return
+	}
+	defer file.Close()
+	prepared, err := itemimages.Prepare(file, header)
+	if err != nil {
+		status := http.StatusBadRequest
+		if errors.Is(err, itemimages.ErrTooLarge) {
+			status = http.StatusRequestEntityTooLarge
+		}
+		writeError(w, status, err.Error())
+		return
+	}
+	if err := itemimages.StorePrepared(r.Context(), a.images, prepared); err != nil {
+		a.logger.Error("store item image objects", "error", err)
+		writeError(w, http.StatusBadGateway, "store image")
+		return
+	}
+	created, err := a.store.CreateItemImage(r.Context(), store.ItemImage{
+		ID: prepared.ID, ItemID: item.ID, OriginalKey: prepared.OriginalKey, ThumbnailKey: prepared.ThumbnailKey,
+		MIMEType: prepared.MIMEType, OriginalFilename: prepared.OriginalFilename,
+		Width: prepared.Width, Height: prepared.Height, SizeBytes: int64(len(prepared.Original)),
+	})
+	if err != nil {
+		_ = a.images.Delete(r.Context(), prepared.OriginalKey)
+		_ = a.images.Delete(r.Context(), prepared.ThumbnailKey)
+		a.logger.Error("save item image", "error", err)
+		writeError(w, http.StatusInternalServerError, "save image")
+		return
+	}
+	created.OriginalURL = "/api/images/" + created.ID + "/original"
+	created.ThumbnailURL = "/api/images/" + created.ID + "/thumbnail"
+	writeJSON(w, http.StatusCreated, created)
+}
+
+func (a api) serveItemImage(w http.ResponseWriter, r *http.Request) {
+	if a.store == nil || a.images == nil {
+		http.NotFound(w, r)
+		return
+	}
+	imageRecord, err := a.store.GetItemImage(r.Context(), r.PathValue("id"))
+	if err != nil {
+		http.NotFound(w, r)
+		return
+	}
+	key := imageRecord.OriginalKey
+	if r.PathValue("variant") == "thumbnail" {
+		key = imageRecord.ThumbnailKey
+	} else if r.PathValue("variant") != "original" {
+		http.NotFound(w, r)
+		return
+	}
+	object, err := a.images.Get(r.Context(), key)
+	if err != nil {
+		a.logger.Error("read item image", "error", err)
+		writeError(w, http.StatusBadGateway, "read image")
+		return
+	}
+	defer object.Body.Close()
+	w.Header().Set("Content-Type", object.ContentType)
+	w.Header().Set("Cache-Control", "private, max-age=86400")
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	if r.PathValue("variant") == "original" {
+		w.Header().Set("Content-Disposition", mime.FormatMediaType("inline", map[string]string{"filename": imageRecord.OriginalFilename}))
+	}
+	if object.Size > 0 {
+		w.Header().Set("Content-Length", strconv.FormatInt(object.Size, 10))
+	}
+	_, _ = io.Copy(w, object.Body)
+}
+
+func setImageURLs(images []store.ItemImage) {
+	for i := range images {
+		images[i].OriginalURL = "/api/images/" + images[i].ID + "/original"
+		images[i].ThumbnailURL = "/api/images/" + images[i].ID + "/thumbnail"
+	}
 }
 
 func (a api) createCategoryProposal(w http.ResponseWriter, r *http.Request) {

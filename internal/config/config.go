@@ -19,6 +19,12 @@ type Config struct {
 	DefaultUserName string
 	AutoMigrate     bool
 	LogLevel        slog.Level
+	S3Endpoint      string
+	S3Region        string
+	S3Bucket        string
+	S3AccessKeyID   string
+	S3SecretKey     string
+	S3UsePathStyle  bool
 }
 
 func Load() Config {
@@ -34,7 +40,17 @@ func Load() Config {
 		DefaultUserName: env("REMVENTORY_DEFAULT_USER_NAME", "Remventory User"),
 		AutoMigrate:     envBool("REMVENTORY_AUTO_MIGRATE", true),
 		LogLevel:        envLogLevel("REMVENTORY_LOG_LEVEL", slog.LevelInfo),
+		S3Endpoint:      env("S3_ENDPOINT", ""),
+		S3Region:        env("S3_REGION", "us-east-1"),
+		S3Bucket:        env("S3_BUCKET", ""),
+		S3AccessKeyID:   env("S3_ACCESS_KEY_ID", ""),
+		S3SecretKey:     env("S3_SECRET_ACCESS_KEY", ""),
+		S3UsePathStyle:  envBool("S3_USE_PATH_STYLE", true),
 	}
+}
+
+func (c Config) StorageConfigured() bool {
+	return c.S3Endpoint != "" && c.S3Bucket != "" && c.S3AccessKeyID != "" && c.S3SecretKey != ""
 }
 
 func (c Config) PublicStatus() map[string]any {
@@ -48,6 +64,7 @@ func (c Config) PublicStatus() map[string]any {
 		"openai_base_url":           c.OpenAIBaseURL,
 		"access_token_gate":         c.AccessToken != "",
 		"auto_migrate":              c.AutoMigrate,
+		"image_storage_configured":  c.StorageConfigured(),
 	}
 }
 

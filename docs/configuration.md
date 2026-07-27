@@ -2,7 +2,7 @@
 
 Remventory is configured with environment variables. The prototype is intended to run as one application container connected to Postgres and an OpenAI-compatible model endpoint.
 
-`DATABASE_URL`, `OPENAI_MAIN_MODEL`, and `OPENAI_THINKING_MODEL` are required for the application to report ready. Remy's short, structured dialog messages use the main non-thinking model; deeper matching and proposal reasoning use the thinking model.
+`DATABASE_URL`, `OPENAI_MAIN_MODEL`, and `OPENAI_THINKING_MODEL` are required for the application to report ready. Remy's short, structured dialog messages use the main non-thinking model; deeper matching and proposal reasoning use the thinking model. Image uploads additionally require the S3-compatible settings below.
 
 ## Required for a useful run
 
@@ -24,6 +24,14 @@ Remventory is configured with environment variables. The prototype is intended t
 | `REMVENTORY_DEFAULT_USER_NAME` | `Remventory User` | Display name for the prototype default user. |
 | `REMVENTORY_AUTO_MIGRATE` | `true` | Runs built-in Postgres migrations on startup. |
 | `REMVENTORY_LOG_LEVEL` | `info` | One of `debug`, `info`, `warn`, or `error`. |
+| `S3_ENDPOINT` | empty | Base URL for the S3-compatible object-storage service. |
+| `S3_REGION` | `us-east-1` | Signing region expected by the storage service. |
+| `S3_BUCKET` | empty | Bucket that stores item originals and thumbnails. |
+| `S3_ACCESS_KEY_ID` | empty | Storage access-key ID. |
+| `S3_SECRET_ACCESS_KEY` | empty | Storage secret access key. |
+| `S3_USE_PATH_STYLE` | `true` | Uses path-style bucket URLs, which are commonly required by compatible services. |
+
+All six storage values must be configured before image upload routes are enabled. Credentials belong in runtime environment configuration such as a gitignored `.env`, never in source control.
 
 ## Health Checks
 

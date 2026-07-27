@@ -57,6 +57,14 @@ Use the composer to create, update, remove, or browse inventory. Press Enter to 
 
 Remy shows category attributes and item values in tables. When proposing an item, it only includes details stated in the request (or already stored on an item being updated); missing details remain blank rather than being guessed. Approve or reject the proposal in the page—rejection does not change inventory.
 
+Every saved item can have one picture in the current UI. After an item-add proposal is approved, Remventory opens the saved item's detail view automatically. Item names in inventory lists open that same view. Drop a JPEG, PNG, or GIF up to 12 MB onto the picture area, or select the area to use the native file chooser. Remventory stores the untouched original and a server-generated 320×320 center-cropped thumbnail under UUID-based object keys. The browser only loads images through the Go application; bucket URLs and credentials are never exposed. Select a saved picture to view the original in a modal. The database relation already supports multiple images per item for a future UI expansion.
+
+Category fields support `text`, `number`, `boolean`, `date`, and `enum`. Enumeration definitions use `config.options`, for example:
+
+```json
+{"key":"condition","label":"Condition","data_type":"enum","config":{"options":["New","Good","Fair"]}}
+```
+
 Inventory questions without an explicit category search across every relevant collection and group matching items by collection. Supplying a category to the query API or MCP tool keeps the search scoped to that category.
 
 ## Prototype Proposal Flow
@@ -110,6 +118,15 @@ Approve the item proposal with the same proposal decision endpoint, then list it
 ```sh
 curl 'http://localhost:8080/api/items?category_id=<category-id>'
 ```
+
+Upload a picture directly through the API with multipart form data:
+
+```sh
+curl -X POST "http://localhost:8080/api/items/<item-id>/images" \
+  -F "image=@picture.png"
+```
+
+The response includes application-local `thumbnail_url` and `original_url` values. Direct bucket access is intentionally not part of the API.
 
 Check whether an item already exists:
 

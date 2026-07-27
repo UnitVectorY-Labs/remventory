@@ -775,8 +775,8 @@ func (s *Service) categoryDraft(ctx context.Context, message string, categories 
 		categoryBytes, _ := json.Marshal(categories)
 		err := s.completeJSON(ctx, s.cfg.MainModel, `Return only JSON for an inventory category proposal.
 Schema:
-{"operation":"create|update|delete","category_id":"string","name":"string","description":"string","attributes":[{"key":"snake_case","label":"string","data_type":"text|number|boolean|date","required":boolean,"display_order":number}]}
-For create, suggest a practical category definition. For update, choose one existing category_id and return the complete resulting attribute list: preserve existing attributes unless the user explicitly asks to add, remove, or change one. For delete, return the existing category_id and no invented details. Use only category ids from the provided list.
+{"operation":"create|update|delete","category_id":"string","name":"string","description":"string","attributes":[{"key":"snake_case","label":"string","data_type":"text|number|boolean|date|enum","required":boolean,"display_order":number,"config":{"options":["string"]}}]}
+For enum attributes, config.options must contain the complete non-empty list of allowed values. For other attribute types, use an empty config object. For create, suggest a practical category definition. For update, choose one existing category_id and return the complete resulting attribute list: preserve existing attributes unless the user explicitly asks to add, remove, or change one. For delete, return the existing category_id and no invented details. Use only category ids from the provided list.
 Existing categories: `+string(categoryBytes), message, &draft)
 		if err == nil && draft.Operation == "delete" && draft.CategoryID != "" {
 			return draft, nil

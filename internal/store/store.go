@@ -64,6 +64,22 @@ type Item struct {
 	Quantity   int             `json:"quantity" db:"quantity"`
 	CreatedAt  time.Time       `json:"created_at" db:"created_at"`
 	UpdatedAt  time.Time       `json:"updated_at" db:"updated_at"`
+	Images     []ItemImage     `json:"images" db:"-"`
+}
+
+type ItemImage struct {
+	ID               string    `json:"id" db:"id"`
+	ItemID           string    `json:"item_id" db:"item_id"`
+	OriginalKey      string    `json:"-" db:"original_key"`
+	ThumbnailKey     string    `json:"-" db:"thumbnail_key"`
+	MIMEType         string    `json:"mime_type" db:"mime_type"`
+	OriginalFilename string    `json:"original_filename" db:"original_filename"`
+	Width            int       `json:"width" db:"width"`
+	Height           int       `json:"height" db:"height"`
+	SizeBytes        int64     `json:"size_bytes" db:"size_bytes"`
+	CreatedAt        time.Time `json:"created_at" db:"created_at"`
+	OriginalURL      string    `json:"original_url" db:"-"`
+	ThumbnailURL     string    `json:"thumbnail_url" db:"-"`
 }
 
 type Proposal struct {
@@ -278,7 +294,7 @@ func (s *Store) CreateCategoryProposal(ctx context.Context, payload CategoryProp
 
 func (s *Store) CreateItemProposal(ctx context.Context, payload ItemProposalPayload) (Proposal, error) {
 	var err error
-	payload, err = s.validateItemProposalPayload(payload)
+	payload, err = s.validateItemProposalPayload(ctx, payload)
 	if err != nil {
 		return Proposal{}, err
 	}
@@ -355,7 +371,7 @@ func (s *Store) RevisePendingProposal(ctx context.Context, proposalID string, pa
 		if err := json.Unmarshal(payload, &revised); err != nil {
 			return Proposal{}, errors.New("revised item proposal must be valid")
 		}
-		if _, err := s.validateItemProposalPayload(revised); err != nil {
+		if _, err := s.validateItemProposalPayload(ctx, revised); err != nil {
 			return Proposal{}, fmt.Errorf("revised item proposal: %w", err)
 		}
 	default:
@@ -400,7 +416,7 @@ func (s *Store) DecideProposal(ctx context.Context, proposalID string, decision 
 	status := "rejected"
 	if decision.Approve {
 		status = "approved"
-		if err := s.commitProposal(ctx, tx, proposal); err != nil {
+		if err := s.commitProposal(ctx, tx, &proposal); err != nil {
 			return Proposal{}, err
 		}
 	}
@@ -420,7 +436,7 @@ func (s *Store) DecideProposal(ctx context.Context, proposalID string, decision 
 	return proposal, nil
 }
 
-func (s *Store) commitProposal(ctx context.Context, tx pgx.Tx, proposal Proposal) error {
+func (s *Store) commitProposal(ctx context.Context, tx pgx.Tx, proposal *Proposal) error {
 	switch proposal.Type {
 	case "category_create":
 		var payload CategoryProposalPayload
@@ -433,7 +449,22 @@ func (s *Store) commitProposal(ctx context.Context, tx pgx.Tx, proposal Proposal
 		if err := json.Unmarshal(proposal.ProposedPayload, &payload); err != nil {
 			return err
 		}
-		return applyItemChange(ctx, tx, proposal.UserID, payload)
+		itemID, err := applyItemChange(ctx, tx, proposal.UserID, payload)
+		if err != nil {
+			return err
+		}
+		if itemID != "" && payload.ItemID != itemID {
+			payload.ItemID = itemID
+			encoded, err := json.Marshal(payload)
+			if err != nil {
+				return err
+			}
+			if _, err := tx.Exec(ctx, `update proposals set proposed_payload_jsonb = $2::jsonb where id = $1`, proposal.ID, string(encoded)); err != nil {
+				return err
+			}
+			proposal.ProposedPayload = encoded
+		}
+		return nil
 	default:
 		return fmt.Errorf("unsupported proposal type %q", proposal.Type)
 	}
@@ -461,17 +492,39 @@ func validateCategoryProposalPayload(payload *CategoryProposalPayload) error {
 		return errors.New("operation must be create, update, or delete")
 	}
 	for i := range payload.Attributes {
-		if payload.Attributes[i].Key == "" || payload.Attributes[i].Label == "" || payload.Attributes[i].DataType == "" {
+		attribute := &payload.Attributes[i]
+		if attribute.Key == "" || attribute.Label == "" || attribute.DataType == "" {
 			return errors.New("attribute key, label, and data_type are required")
 		}
-		if len(payload.Attributes[i].Config) == 0 {
-			payload.Attributes[i].Config = json.RawMessage(`{}`)
+		switch attribute.DataType {
+		case "text", "number", "boolean", "date":
+		case "enum":
+			var config struct {
+				Options []string `json:"options"`
+			}
+			if err := json.Unmarshal(attribute.Config, &config); err != nil || len(config.Options) == 0 {
+				return fmt.Errorf("enum attribute %q requires config.options", attribute.Key)
+			}
+			seen := map[string]bool{}
+			for _, option := range config.Options {
+				if strings.TrimSpace(option) == "" || seen[option] {
+					return fmt.Errorf("enum attribute %q options must be non-empty and unique", attribute.Key)
+				}
+				seen[option] = true
+			}
+		default:
+			return fmt.Errorf("attribute %q has unsupported data_type %q", attribute.Key, attribute.DataType)
+		}
+		if len(attribute.Config) == 0 {
+			attribute.Config = json.RawMessage(`{}`)
+		} else if !json.Valid(attribute.Config) {
+			return fmt.Errorf("attribute %q config must be valid JSON", attribute.Key)
 		}
 	}
 	return nil
 }
 
-func (s *Store) validateItemProposalPayload(payload ItemProposalPayload) (ItemProposalPayload, error) {
+func (s *Store) validateItemProposalPayload(ctx context.Context, payload ItemProposalPayload) (ItemProposalPayload, error) {
 	if payload.Operation == "" {
 		payload.Operation = "create"
 	}
@@ -495,7 +548,58 @@ func (s *Store) validateItemProposalPayload(payload ItemProposalPayload) (ItemPr
 	if payload.Operation != "create" && payload.ItemID == "" {
 		return ItemProposalPayload{}, errors.New("item_id is required for update, delete, and quantity_adjust operations")
 	}
+	if payload.Operation == "create" || payload.Operation == "update" {
+		category, err := s.GetCategoryDefinition(ctx, payload.CategoryID)
+		if err != nil {
+			return ItemProposalPayload{}, fmt.Errorf("get category definition: %w", err)
+		}
+		if err := validateItemAttributeValues(payload.Attributes, category.Attributes); err != nil {
+			return ItemProposalPayload{}, err
+		}
+	}
 	return payload, nil
+}
+
+func validateItemAttributeValues(raw json.RawMessage, definitions []Attribute) error {
+	var values map[string]any
+	if err := json.Unmarshal(raw, &values); err != nil {
+		return errors.New("attributes must be a JSON object")
+	}
+	defined := make(map[string]Attribute, len(definitions))
+	for _, definition := range definitions {
+		defined[definition.Key] = definition
+	}
+	for key, value := range values {
+		definition, ok := defined[key]
+		if !ok {
+			return fmt.Errorf("attribute %q is not defined for this category", key)
+		}
+		valid := false
+		switch definition.DataType {
+		case "text", "date":
+			_, valid = value.(string)
+		case "number":
+			_, valid = value.(float64)
+		case "boolean":
+			_, valid = value.(bool)
+		case "enum":
+			stringValue, isString := value.(string)
+			var config struct {
+				Options []string `json:"options"`
+			}
+			_ = json.Unmarshal(definition.Config, &config)
+			for _, option := range config.Options {
+				if isString && stringValue == option {
+					valid = true
+					break
+				}
+			}
+		}
+		if !valid {
+			return fmt.Errorf("attribute %q is not a valid %s value", key, definition.DataType)
+		}
+	}
+	return nil
 }
 
 func applyCategoryChange(ctx context.Context, tx pgx.Tx, userID string, payload CategoryProposalPayload) error {
@@ -577,7 +681,7 @@ func updateCategory(ctx context.Context, tx pgx.Tx, userID string, payload Categ
 	return nil
 }
 
-func applyItemChange(ctx context.Context, tx pgx.Tx, userID string, payload ItemProposalPayload) error {
+func applyItemChange(ctx context.Context, tx pgx.Tx, userID string, payload ItemProposalPayload) (string, error) {
 	attributes := payload.Attributes
 	if len(attributes) == 0 {
 		attributes = json.RawMessage(`{}`)
@@ -589,20 +693,21 @@ func applyItemChange(ctx context.Context, tx pgx.Tx, userID string, payload Item
 
 	switch payload.Operation {
 	case "create":
-		_, err := tx.Exec(ctx, `insert into items (user_id, category_id, title, attributes_jsonb, quantity)
-			values ($1, $2, $3, $4::jsonb, $5)`, userID, payload.CategoryID, payload.Title, string(attributes), quantity)
-		return err
+		var itemID string
+		err := tx.QueryRow(ctx, `insert into items (user_id, category_id, title, attributes_jsonb, quantity)
+			values ($1, $2, $3, $4::jsonb, $5) returning id`, userID, payload.CategoryID, payload.Title, string(attributes), quantity).Scan(&itemID)
+		return itemID, err
 	case "update":
 		tag, err := tx.Exec(ctx, `update items
 			set title = $3, attributes_jsonb = $4::jsonb, quantity = $5, updated_at = now()
 			where id = $1 and user_id = $2`, payload.ItemID, userID, payload.Title, string(attributes), quantity)
 		if err != nil {
-			return err
+			return "", err
 		}
 		if tag.RowsAffected() == 0 {
-			return ErrNotFound
+			return "", ErrNotFound
 		}
-		return nil
+		return payload.ItemID, nil
 	case "quantity_adjust":
 		delta := payload.QuantityDelta
 		if delta == 0 {
@@ -612,23 +717,23 @@ func applyItemChange(ctx context.Context, tx pgx.Tx, userID string, payload Item
 			set quantity = quantity + $3, updated_at = now()
 			where id = $1 and user_id = $2 and quantity + $3 > 0`, payload.ItemID, userID, delta)
 		if err != nil {
-			return err
+			return "", err
 		}
 		if tag.RowsAffected() == 0 {
-			return ErrNotFound
+			return "", ErrNotFound
 		}
-		return nil
+		return payload.ItemID, nil
 	case "delete":
 		tag, err := tx.Exec(ctx, `delete from items where id = $1 and user_id = $2`, payload.ItemID, userID)
 		if err != nil {
-			return err
+			return "", err
 		}
 		if tag.RowsAffected() == 0 {
-			return ErrNotFound
+			return "", ErrNotFound
 		}
-		return nil
+		return "", nil
 	default:
-		return fmt.Errorf("unsupported item operation %q", payload.Operation)
+		return "", fmt.Errorf("unsupported item operation %q", payload.Operation)
 	}
 }
 
@@ -641,7 +746,60 @@ func (s *Store) ListItems(ctx context.Context, categoryID string, limit, offset 
 	if err != nil {
 		return nil, err
 	}
-	return pgx.CollectRows(rows, pgx.RowToStructByName[Item])
+	items, err := pgx.CollectRows(rows, pgx.RowToStructByName[Item])
+	if err != nil {
+		return nil, err
+	}
+	for i := range items {
+		items[i].Images, err = s.ListItemImages(ctx, items[i].ID)
+		if err != nil {
+			return nil, err
+		}
+	}
+	return items, nil
+}
+
+func (s *Store) GetItem(ctx context.Context, itemID string) (Item, error) {
+	item, err := s.getItem(ctx, itemID)
+	if err != nil {
+		return Item{}, err
+	}
+	item.Images, err = s.ListItemImages(ctx, item.ID)
+	return item, err
+}
+
+func (s *Store) ListItemImages(ctx context.Context, itemID string) ([]ItemImage, error) {
+	rows, err := s.pool.Query(ctx, `select id, item_id, object_key as original_key,
+		coalesce(thumbnail_object_key, '') as thumbnail_key, mime_type, original_filename,
+		width, height, size_bytes, created_at
+		from item_assets where item_id = $1 order by created_at, id`, itemID)
+	if err != nil {
+		return nil, err
+	}
+	return pgx.CollectRows(rows, pgx.RowToStructByName[ItemImage])
+}
+
+func (s *Store) CreateItemImage(ctx context.Context, image ItemImage) (ItemImage, error) {
+	err := s.pool.QueryRow(ctx, `insert into item_assets
+		(id, item_id, object_key, thumbnail_object_key, mime_type, original_filename, width, height, size_bytes)
+		values ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+		returning created_at`, image.ID, image.ItemID, image.OriginalKey, image.ThumbnailKey,
+		image.MIMEType, image.OriginalFilename, image.Width, image.Height, image.SizeBytes).Scan(&image.CreatedAt)
+	return image, err
+}
+
+func (s *Store) GetItemImage(ctx context.Context, imageID string) (ItemImage, error) {
+	var image ItemImage
+	err := s.pool.QueryRow(ctx, `select a.id, a.item_id, a.object_key, coalesce(a.thumbnail_object_key, ''),
+		a.mime_type, a.original_filename, a.width, a.height, a.size_bytes, a.created_at
+		from item_assets a join items i on i.id = a.item_id
+		where a.id = $1 and i.user_id = $2`, imageID, DefaultUserID).Scan(
+		&image.ID, &image.ItemID, &image.OriginalKey, &image.ThumbnailKey, &image.MIMEType,
+		&image.OriginalFilename, &image.Width, &image.Height, &image.SizeBytes, &image.CreatedAt)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return ItemImage{}, ErrNotFound
+	}
+	return image, err
 }
 
 func (s *Store) getItem(ctx context.Context, itemID string) (Item, error) {

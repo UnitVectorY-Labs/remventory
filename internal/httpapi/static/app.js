@@ -9,13 +9,22 @@ const submittedMessage = document.querySelector("#submitted-message");
 const composerHint = document.querySelector("#composer-hint");
 const configurationWarning = document.querySelector("#configuration-warning");
 const remyAvatar = document.querySelector("#remy-avatar");
+const imageModal = document.querySelector("#image-modal");
+const imageModalContent = document.querySelector("#image-modal-content");
+const imageModalTitle = document.querySelector("#image-modal-title");
+const closeImageModal = document.querySelector("#close-image-modal");
 let activeController = null;
 let activeMessage = "";
 let currentResponse = null;
 const minimumWorkingDialogMs = 1800;
-const renderableComponentTypes = new Set(["category_proposal", "item_proposal", "category_definition", "item_list", "query_result", "category_list"]);
+const renderableComponentTypes = new Set(["category_proposal", "item_proposal", "item_detail", "category_definition", "item_list", "query_result", "category_list"]);
 
 showConfigurationStatus();
+
+closeImageModal.addEventListener("click", () => imageModal.close());
+imageModal.addEventListener("click", (event) => {
+  if (event.target === imageModal) imageModal.close();
+});
 
 form.addEventListener("submit", async (event) => {
   event.preventDefault();
@@ -86,8 +95,9 @@ async function askRemy(message) {
 }
 
 async function api(path, options = {}) {
+  const headers = options.body instanceof FormData ? {} : { "Content-Type": "application/json" };
   const response = await fetch(path, {
-    headers: { "Content-Type": "application/json" },
+    headers,
     ...options,
   });
   const body = await response.json().catch(() => ({}));
@@ -98,9 +108,12 @@ async function api(path, options = {}) {
 async function showConfigurationStatus() {
   try {
     const status = await api("/api/config");
-    if (!status.config?.model_configured) {
+    const missing = [];
+    if (!status.config?.model_configured) missing.push("Remy needs OPENAI_MAIN_MODEL and OPENAI_THINKING_MODEL");
+    if (!status.config?.image_storage_configured) missing.push("picture uploads need the S3-compatible storage settings");
+    if (missing.length) {
       configurationWarning.hidden = false;
-      configurationWarning.textContent = "Remy needs OPENAI_MAIN_MODEL and OPENAI_THINKING_MODEL before requests can use the full agent workflow.";
+      configurationWarning.textContent = `${missing.join("; ")} before all features are available.`;
     }
   } catch (_) {
     // Submission errors remain close to the request surface.
@@ -138,6 +151,7 @@ function renderComponent(component) {
   switch (component.type) {
     case "category_proposal": return proposalCard(component.data, "Category change");
     case "item_proposal": return proposalCard(component.data, "Item change");
+    case "item_detail": return itemDetail(component.data);
     case "category_definition": return categoryDefinition(component.data);
     case "item_list": return itemList(component.data);
     case "query_result": return queryResult(component.data);
@@ -205,10 +219,19 @@ async function decide(id, approve) {
       body: JSON.stringify({ approve, reason: "" }),
       signal: activeController.signal,
     });
+    let components = [{ type: proposal.type === "category_create" ? "category_proposal" : "item_proposal", data: proposal }];
+    const payload = proposal.proposed_payload || {};
+    if (approve && proposal.type === "item_change" && payload.operation !== "delete" && payload.item_id) {
+      const [item, category] = await Promise.all([
+        api(`/api/items/${payload.item_id}`, { signal: activeController.signal }),
+        api(`/api/categories/${payload.category_id}`, { signal: activeController.signal }),
+      ]);
+      components = [{ type: "item_detail", data: { item, category } }];
+    }
     const response = {
       state: "completed",
       summary: approve ? "Changes approved and saved." : "Proposal rejected. No inventory data was changed.",
-      components: [{ type: proposal.type === "category_create" ? "category_proposal" : "item_proposal", data: proposal }],
+      components,
     };
     if (!bodyContentChanged(context, response)) return;
     renderResponse(response);
@@ -259,6 +282,42 @@ function itemList(data) {
   return card;
 }
 
+function itemDetail(data) {
+  const item = data.item || {};
+  const category = data.category || {};
+  const card = document.createElement("article");
+  card.className = "card item-detail-card";
+  card.innerHTML = `<div class="card-heading"><div><p class="eyebrow">${escapeHTML(category.name || "Inventory item")}</p><h2>${escapeHTML(item.title || "Item")}</h2></div><span class="badge">Quantity ${escapeHTML(String(item.quantity || 1))}</span></div>`;
+
+  const layout = document.createElement("div");
+  layout.className = "item-detail-layout";
+  layout.append(itemPicturePanel(item));
+
+  const information = document.createElement("section");
+  information.className = "item-information";
+  information.innerHTML = "<h3>Item details</h3>";
+  const fields = document.createElement("dl");
+  fields.className = "item-fields";
+  appendDetail(fields, "Quantity", item.quantity);
+  const values = item.attributes || {};
+  for (const attribute of category.attributes || []) {
+    appendDetail(fields, attribute.label || prettyKey(attribute.key), formatValue(values[attribute.key]));
+  }
+  information.append(fields);
+  layout.append(information);
+  card.append(layout);
+  return card;
+}
+
+function openItemDetail(item, category) {
+  renderResponse({
+    state: "completed",
+    summary: `Details for ${item.title}.`,
+    components: [{ type: "item_detail", data: { item, category } }],
+  });
+  setDialog({ icon: "ready", message: `Here are the details for ${item.title}. You can add a picture here too.` });
+}
+
 function categoryList(categories) {
   const card = document.createElement("article");
   card.className = "card";
@@ -283,11 +342,12 @@ function attributeDefinitionTable(attributes, title) {
     return section;
   }
   const table = document.createElement("table");
-  table.innerHTML = "<thead><tr><th>Attribute</th><th>Type</th><th>Required</th></tr></thead>";
+  table.innerHTML = "<thead><tr><th>Attribute</th><th>Type</th><th>Options</th><th>Required</th></tr></thead>";
   const body = document.createElement("tbody");
   for (const attribute of attributes) {
     const row = document.createElement("tr");
-    row.innerHTML = `<td>${escapeHTML(attribute.label || prettyKey(attribute.key))}</td><td>${escapeHTML(attribute.data_type || "text")}</td><td>${attribute.required ? "Yes" : "No"}</td>`;
+    const options = attribute.data_type === "enum" ? enumOptions(attribute).join(", ") : "—";
+    row.innerHTML = `<td>${escapeHTML(attribute.label || prettyKey(attribute.key))}</td><td>${escapeHTML(fieldTypeLabel(attribute.data_type))}</td><td>${escapeHTML(options)}</td><td>${attribute.required ? "Yes" : "No"}</td>`;
     body.append(row);
   }
   table.append(body);
@@ -334,17 +394,146 @@ function itemsTable(items, category, title) {
   const attributes = category.attributes || [];
   const table = document.createElement("table");
   const head = document.createElement("thead");
-  head.innerHTML = `<tr><th>Item</th><th>Quantity</th>${attributes.map((attribute) => `<th>${escapeHTML(attribute.label || prettyKey(attribute.key))}</th>`).join("")}</tr>`;
+  head.innerHTML = `<tr><th>Picture</th><th>Item</th><th>Quantity</th>${attributes.map((attribute) => `<th>${escapeHTML(attribute.label || prettyKey(attribute.key))}</th>`).join("")}</tr>`;
   const body = document.createElement("tbody");
   for (const item of items) {
     const values = item.attributes || {};
     const row = document.createElement("tr");
-    row.innerHTML = `<td>${escapeHTML(item.title)}</td><td>${escapeHTML(String(item.quantity))}</td>${attributes.map((attribute) => `<td>${escapeHTML(formatValue(values[attribute.key]))}</td>`).join("")}`;
+    row.append(itemPictureCell(item, category));
+    const titleCell = document.createElement("td");
+    const titleButton = document.createElement("button");
+    titleButton.type = "button";
+    titleButton.className = "item-title-button";
+    titleButton.textContent = item.title;
+    titleButton.addEventListener("click", () => openItemDetail(item, category));
+    titleCell.append(titleButton);
+    row.append(titleCell);
+    row.insertAdjacentHTML("beforeend", `<td>${escapeHTML(String(item.quantity))}</td>${attributes.map((attribute) => `<td>${escapeHTML(formatValue(values[attribute.key]))}</td>`).join("")}`);
     body.append(row);
   }
   table.append(head, body);
   section.append(table);
   return section;
+}
+
+function itemPictureCell(item, category) {
+  const cell = document.createElement("td");
+  cell.className = "picture-cell";
+  const picture = (item.images || [])[0];
+  if (picture) {
+    const button = document.createElement("button");
+    button.className = "thumbnail-button";
+    button.type = "button";
+    button.title = `View picture for ${item.title}`;
+    const thumbnailURL = picture.thumbnail_url || `/api/images/${picture.id}/thumbnail`;
+    const originalURL = picture.original_url || `/api/images/${picture.id}/original`;
+    button.innerHTML = `<img src="${escapeHTML(thumbnailURL)}" alt="Picture of ${escapeHTML(item.title)}">`;
+    button.addEventListener("click", () => showItemImage(item.title, originalURL));
+    cell.append(button);
+    return cell;
+  }
+
+  const button = document.createElement("button");
+  button.type = "button";
+  button.className = "upload-picture secondary";
+  button.textContent = "Add";
+  button.setAttribute("aria-label", `Add picture for ${item.title}`);
+  button.addEventListener("click", () => openItemDetail(item, category));
+  cell.append(button);
+  return cell;
+}
+
+function itemPicturePanel(item) {
+  const section = document.createElement("section");
+  section.className = "item-picture-panel";
+  section.innerHTML = "<h3>Picture</h3>";
+  const picture = (item.images || [])[0];
+  if (picture) {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "item-picture-button";
+    const thumbnailURL = picture.thumbnail_url || `/api/images/${picture.id}/thumbnail`;
+    const originalURL = picture.original_url || `/api/images/${picture.id}/original`;
+    button.innerHTML = `<img src="${escapeHTML(thumbnailURL)}" alt="Picture of ${escapeHTML(item.title)}"><span>View full size</span>`;
+    button.addEventListener("click", () => showItemImage(item.title, originalURL));
+    section.append(button);
+    return section;
+  }
+
+  const input = document.createElement("input");
+  input.type = "file";
+  input.accept = "image/jpeg,image/png,image/gif";
+  input.className = "visually-hidden";
+  input.setAttribute("aria-label", `Choose a picture for ${item.title}`);
+  const dropZone = document.createElement("div");
+  dropZone.className = "photo-dropzone";
+  dropZone.tabIndex = 0;
+  dropZone.setAttribute("role", "button");
+  dropZone.setAttribute("aria-label", `Add a picture for ${item.title}`);
+  dropZone.innerHTML = `<svg class="upload-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 16V4m0 0-4 4m4-4 4 4M5 14v4a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-4"/></svg><strong>Drop a picture here</strong><span>or <span class="photo-select-action">choose a file</span></span><small>JPEG, PNG, or GIF · up to 12 MB</small>`;
+
+  const choose = () => { if (!dropZone.classList.contains("uploading")) input.click(); };
+  dropZone.addEventListener("click", choose);
+  dropZone.addEventListener("keydown", (event) => {
+    if (event.key === "Enter" || event.key === " ") {
+      event.preventDefault();
+      choose();
+    }
+  });
+  for (const eventName of ["dragenter", "dragover"]) {
+    dropZone.addEventListener(eventName, (event) => {
+      event.preventDefault();
+      if (!dropZone.classList.contains("uploading")) dropZone.classList.add("dragging");
+    });
+  }
+  for (const eventName of ["dragleave", "drop"]) {
+    dropZone.addEventListener(eventName, (event) => {
+      event.preventDefault();
+      dropZone.classList.remove("dragging");
+    });
+  }
+  dropZone.addEventListener("drop", (event) => {
+    const file = event.dataTransfer?.files?.[0];
+    if (file) uploadItemPicture(item, file, section, dropZone);
+  });
+  input.addEventListener("change", () => {
+    const file = input.files?.[0];
+    if (file) uploadItemPicture(item, file, section, dropZone);
+  });
+  section.append(dropZone, input);
+  return section;
+}
+
+async function uploadItemPicture(item, file, section, dropZone) {
+  if (!["image/jpeg", "image/png", "image/gif"].includes(file.type)) {
+    setDialog({ icon: "error", message: "Choose a JPEG, PNG, or GIF image." });
+    return;
+  }
+  if (file.size > 12 * 1024 * 1024) {
+    setDialog({ icon: "error", message: "That picture is larger than the 12 MB upload limit." });
+    return;
+  }
+  dropZone.classList.add("uploading");
+  dropZone.setAttribute("aria-busy", "true");
+  dropZone.innerHTML = `<span class="upload-spinner" aria-hidden="true"></span><strong>Uploading ${escapeHTML(file.name)}</strong><span>Please keep this page open</span>`;
+  try {
+    const body = new FormData();
+    body.append("image", file);
+    const image = await api(`/api/items/${item.id}/images`, { method: "POST", body });
+    item.images = [image];
+    section.replaceWith(itemPicturePanel(item));
+    setDialog({ icon: "celebrating", message: `The picture for ${item.title} is uploaded and ready to view.` });
+  } catch (error) {
+    section.replaceWith(itemPicturePanel(item));
+    setDialog({ icon: "error", message: `I couldn't upload that picture: ${error.message}` });
+  }
+}
+
+function showItemImage(title, url) {
+  imageModalTitle.textContent = title;
+  imageModalContent.src = url;
+  imageModalContent.alt = `Full-size picture of ${title}`;
+  imageModal.showModal();
 }
 
 function textCard(text) {
@@ -463,3 +652,12 @@ function prettyKey(key) { return String(key || "").replaceAll("_", " ").replace(
 function formatValue(value) { if (value === undefined || value === null || value === "") return "—"; if (typeof value === "boolean") return value ? "Yes" : "No"; return String(value); }
 function sameValue(left, right) { return JSON.stringify(left) === JSON.stringify(right); }
 function escapeHTML(value) { return String(value).replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;").replaceAll('"', "&quot;").replaceAll("'", "&#039;"); }
+function enumOptions(attribute) {
+  try {
+    const config = typeof attribute.config === "string" ? JSON.parse(attribute.config || "{}") : (attribute.config || {});
+    return Array.isArray(config.options) ? config.options : [];
+  } catch (_) {
+    return [];
+  }
+}
+function fieldTypeLabel(type) { return ({ text: "Text", number: "Number", boolean: "Yes / no", date: "Date", enum: "Enumeration" })[type] || prettyKey(type || "text"); }

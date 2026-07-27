@@ -14,6 +14,7 @@ import (
 
 	"github.com/UnitVectorY-Labs/remventory/internal/config"
 	"github.com/UnitVectorY-Labs/remventory/internal/httpapi"
+	"github.com/UnitVectorY-Labs/remventory/internal/itemimages"
 	"github.com/UnitVectorY-Labs/remventory/internal/mcpserver"
 	"github.com/UnitVectorY-Labs/remventory/internal/remy"
 	"github.com/UnitVectorY-Labs/remventory/internal/store"
@@ -66,6 +67,16 @@ func run() error {
 	}
 
 	remyService := remy.New(cfg, repo)
+	var imageObjects itemimages.ObjectStore
+	if cfg.StorageConfigured() {
+		storage, err := itemimages.NewS3Store(ctx, cfg)
+		if err != nil {
+			return fmt.Errorf("configure image storage: %w", err)
+		}
+		imageObjects = storage
+	} else {
+		logger.Warn("S3 image storage is not configured; image uploads will report unavailable")
+	}
 	var mcpHandler http.Handler
 	if repo != nil {
 		mcpHandler = mcptransport.NewStreamableHTTPServer(mcpserver.New(Version, repo, remyService))
@@ -78,6 +89,7 @@ func run() error {
 		MCPHandler: mcpHandler,
 		Version:    Version,
 		Logger:     logger,
+		Images:     imageObjects,
 	})
 
 	server := &http.Server{

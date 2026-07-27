@@ -63,7 +63,7 @@ func New(version string, repo *store.Store, remyService *remy.Service) *mcpserve
 			mcp.WithString("category_id", mcp.Description("Existing category ID for update or delete.")),
 			mcp.WithString("name", mcp.Description("Proposed category name.")),
 			mcp.WithString("description", mcp.Description("Optional category description.")),
-			mcp.WithArray("attributes", mcp.Description("Attribute objects with key, label, data_type, required, and display_order.")),
+			mcp.WithArray("attributes", mcp.Description("Attribute objects with key, label, data_type (text, number, boolean, date, or enum), required, display_order, and config. Enum config must contain an options array.")),
 		),
 		func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 			attributes, err := decodeAttributes(request.GetArguments()["attributes"])
