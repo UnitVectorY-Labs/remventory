@@ -1,6 +1,6 @@
 module github.com/UnitVectorY-Labs/remventory
 
-go 1.26.0 // GOVERSION
+go 1.27.0 // GOVERSION
 
 require (
 	github.com/aws/aws-sdk-go-v2 v1.43.8
