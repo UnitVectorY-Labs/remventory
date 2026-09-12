@@ -11,7 +11,7 @@ require (
 	github.com/jackc/pgx/v5 v5.10.0
 	github.com/mark3labs/mcp-go v1.0.0
 	golang.org/x/image v0.46.0
-	google.golang.org/adk v1.6.0
+	google.golang.org/adk v1.6.1
 )
 
 require (
