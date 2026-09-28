@@ -2,6 +2,7 @@ const form = document.querySelector("#remy-form");
 const input = document.querySelector("#message");
 const sendButton = document.querySelector("#send-request");
 const newChat = document.querySelector("#new-chat");
+const browseInventory = document.querySelector("#browse-inventory");
 const stage = document.querySelector("#stage");
 const dialog = document.querySelector("#remy-dialog");
 const stopRequest = document.querySelector("#stop-request");
@@ -16,10 +17,13 @@ const closeImageModal = document.querySelector("#close-image-modal");
 let activeController = null;
 let activeMessage = "";
 let currentResponse = null;
-const minimumWorkingDialogMs = 1800;
-const renderableComponentTypes = new Set(["category_proposal", "item_proposal", "item_detail", "category_definition", "item_list", "query_result", "category_list"]);
+let pendingProposals = [];
+let conversationID = getConversationID();
+let requestGeneration = 0;
+const renderableComponentTypes = new Set(["category_proposal", "item_proposal", "item_detail", "category_definition", "item_list", "item_cards", "query_result", "category_list", "statistic", "grouped_statistic", "comparison", "clarification"]);
 
 showConfigurationStatus();
+refreshPendingProposals().catch(() => {});
 
 closeImageModal.addEventListener("click", () => imageModal.close());
 imageModal.addEventListener("click", (event) => {
@@ -42,15 +46,21 @@ input.addEventListener("keydown", (event) => {
 });
 
 newChat.addEventListener("click", () => {
+  requestGeneration += 1;
   if (activeController) activeController.abort();
+  activeController = null;
   currentResponse = null;
   activeMessage = "";
+  conversationID = makeUUID();
+  try { localStorage.setItem("remventory-conversation", conversationID); } catch (_) {}
   renderEmpty();
   setDialog({ icon: "ready", message: "Hi, I'm Remy. How can I help you manage your inventory." });
   setRemyImage("ready");
   input.value = "";
   input.focus();
 });
+
+browseInventory.addEventListener("click", () => showBrowseCategories());
 
 stopRequest.addEventListener("click", () => {
   if (!activeController) return;
@@ -66,31 +76,36 @@ if (initialMessage) {
 }
 
 async function askRemy(message) {
+  const generation = ++requestGeneration;
   activeController = new AbortController();
   activeMessage = message;
   const context = visibleContext(currentResponse);
   setWorking(message);
-  let workingDialogShownAt = 0;
   try {
-    const workingDialog = await fetchDialog("working", message, context, activeController.signal);
-    setDialog(workingDialog || { icon: "thinking", message: "I’m on it—let me check the inventory details." });
-    workingDialogShownAt = Date.now();
+    setDialog({ icon: "thinking", message: "I’m checking the collection and getting the useful details together." });
     const response = await api("/api/remy/request", {
       method: "POST",
-      body: JSON.stringify({ message, context }),
+      body: JSON.stringify({ message, session_id: conversationID, focus_ids: currentFocusIDs() }),
       signal: activeController.signal,
     });
-    if (!bodyContentChanged(context, response)) return;
+    if (generation !== requestGeneration) return;
+    if (response.session_id) {
+      conversationID = response.session_id;
+      try { localStorage.setItem("remventory-conversation", conversationID); } catch (_) {}
+    }
+    await refreshPendingProposals(false);
     renderResponse(response);
-    const completedDialog = await fetchDialog("completed", message, visibleContext(response), activeController.signal);
-    await waitForWorkingDialog(workingDialogShownAt, activeController.signal);
-    setDialog(completedDialog || completionFallback(response));
+    setDialog({ icon: "ready", message: response.summary || "All set." });
   } catch (error) {
+    if (generation !== requestGeneration) return;
     if (error.name === "AbortError") {
       renderStopped();
+    } else if (generation === requestGeneration) {
+      await refreshPendingProposals(false).catch(() => {});
+      renderError(error);
     }
   } finally {
-    clearWorking();
+    if (generation === requestGeneration) clearWorking();
   }
 }
 
@@ -109,7 +124,7 @@ async function showConfigurationStatus() {
   try {
     const status = await api("/api/config");
     const missing = [];
-    if (!status.config?.model_configured) missing.push("Remy needs OPENAI_MAIN_MODEL and OPENAI_THINKING_MODEL");
+    if (!status.config?.model_configured) missing.push("Remy needs OPENAI_MAIN_MODEL");
     if (!status.config?.image_storage_configured) missing.push("picture uploads need the S3-compatible storage settings");
     if (missing.length) {
       configurationWarning.hidden = false;
@@ -123,15 +138,40 @@ async function showConfigurationStatus() {
 function renderResponse(response) {
   currentResponse = response;
   stage.innerHTML = "";
+  if (response.summary) {
+    const answer = textCard(response.summary);
+    stage.append(answer);
+  }
   let displayed = 0;
-  for (const component of response.components || []) {
+  const visible = [...(response.components || [])];
+  const present = new Set(visible.map((component) => component?.data?.id).filter(Boolean));
+  for (const proposal of pendingProposals) {
+    if (present.has(proposal.id)) continue;
+    visible.push({ type: proposal.type === "category_create" ? "category_proposal" : "item_proposal", data: proposal });
+  }
+  for (const component of visible) {
+    if (component.type === "text" || component.type === "clarification") {
+      const value=typeof component.data==="string"?component.data:(component.data?.text||component.data?.question||"");
+      if (String(value).trim()===String(response.summary||"").trim()) continue;
+    }
     const rendered = renderComponent(component);
     if (rendered) {
       stage.append(rendered);
       displayed += 1;
     }
   }
-  if (!displayed) renderEmpty();
+  if (!displayed && !response.summary) renderEmpty();
+}
+
+async function refreshPendingProposals(rerender = true) {
+  const generation=requestGeneration;
+  const result=await api("/api/proposals?limit=30");
+  if(generation!==requestGeneration)return;
+  pendingProposals=result.proposals||[];
+  if(rerender) {
+    if(currentResponse) renderResponse(currentResponse);
+    else if(pendingProposals.length) renderResponse({state:"completed",summary:"Pending changes for your review.",components:[]});
+  }
 }
 
 function visibleContext(response) {
@@ -154,9 +194,13 @@ function renderComponent(component) {
     case "item_detail": return itemDetail(component.data);
     case "category_definition": return categoryDefinition(component.data);
     case "item_list": return itemList(component.data);
+    case "item_cards": return itemCards(component.data);
     case "query_result": return queryResult(component.data);
     case "category_list": return categoryList(component.data);
-    case "text": return null;
+    case "text": case "clarification": return textCard(component.data);
+    case "statistic": return statisticCard(component.data);
+    case "grouped_statistic": return groupedStatisticCard(component.data);
+    case "comparison": return comparisonCard(component.data);
     default: return null;
   }
 }
@@ -205,15 +249,13 @@ function proposalCard(proposal, title) {
 
 async function decide(id, approve) {
   if (activeController) return;
+  const generation = ++requestGeneration;
   activeController = new AbortController();
   activeMessage = approve ? "Approve this proposal" : "Reject this proposal";
   const context = visibleContext(currentResponse);
   setWorking(activeMessage);
-  let workingDialogShownAt = 0;
   try {
-    const workingDialog = await fetchDialog("working", activeMessage, context, activeController.signal);
-    setDialog(workingDialog || { icon: "thinking", message: "I’m handling that inventory decision now." });
-    workingDialogShownAt = Date.now();
+    setDialog({ icon: "thinking", message: "I’m recording your decision." });
     const proposal = await api(`/api/proposals/${id}/decision`, {
       method: "POST",
       body: JSON.stringify({ approve, reason: "" }),
@@ -233,16 +275,99 @@ async function decide(id, approve) {
       summary: approve ? "Changes approved and saved." : "Proposal rejected. No inventory data was changed.",
       components,
     };
-    if (!bodyContentChanged(context, response)) return;
+    if (generation !== requestGeneration) return;
     renderResponse(response);
-    const completedDialog = await fetchDialog("completed", activeMessage, visibleContext(response), activeController.signal);
-    await waitForWorkingDialog(workingDialogShownAt, activeController.signal);
-    setDialog(completedDialog || completionFallback(response));
+    await refreshPendingProposals();
+    setDialog({ icon: "ready", message: response.summary });
   } catch (error) {
-    if (error.name === "AbortError") renderStopped();
+    if (generation===requestGeneration && error.name === "AbortError") renderStopped(); else if (generation === requestGeneration) { await refreshPendingProposals(false).catch(()=>{}); renderError(error); }
   } finally {
-    clearWorking();
+    if (generation === requestGeneration) clearWorking();
   }
+}
+
+function textCard(data) {
+  const card = document.createElement("article");
+  card.className = "card remy-answer";
+  const text = typeof data === "string" ? data : (data?.text || data?.question || "");
+  for (const line of String(text).split("\n")) {
+    const paragraph = document.createElement("p");
+    const tokens = line.split(/(\*\*[^*]+\*\*|\*[^*]+\*)/g);
+    for (const token of tokens) {
+      if (token.startsWith("**") && token.endsWith("**")) { const strong=document.createElement("strong"); strong.textContent=token.slice(2,-2); paragraph.append(strong); }
+      else if (token.startsWith("*") && token.endsWith("*")) { const em=document.createElement("em"); em.textContent=token.slice(1,-1); paragraph.append(em); }
+      else paragraph.append(document.createTextNode(token));
+    }
+    card.append(paragraph);
+  }
+  return card;
+}
+
+function statisticCard(data) {
+  const card = document.createElement("article");
+  card.className = "card statistic-card";
+  const heading = document.createElement("h2"); heading.textContent = data?.label || "Collection";
+  const value = document.createElement("strong"); value.textContent = String(data?.value ?? "");
+  const detail = document.createElement("p"); detail.textContent = data?.detail || "";
+  card.append(heading, value, detail); return card;
+}
+
+function comparisonCard(data) {
+  const card = document.createElement("article"); card.className = "card";
+  const heading = document.createElement("h2"); heading.textContent = data?.title || "Comparison"; card.append(heading);
+  const table = document.createElement("table"); const body = document.createElement("tbody");
+  for (const row of data?.rows || []) { const tr = document.createElement("tr"); for (const cell of row) { const td = document.createElement("td"); td.textContent = String(cell ?? ""); tr.append(td); } body.append(tr); }
+  table.append(body); card.append(table); return card;
+}
+
+function groupedStatisticCard(data) {
+  const card=document.createElement("article"); card.className="card";
+  const heading=document.createElement("h2"); heading.textContent=data?.label||"Grouped inventory"; card.append(heading);
+  const table=document.createElement("table"); const body=document.createElement("tbody");
+  const groups=data?.groups||{};
+  for(const [key,value] of Object.entries(groups).sort(([a],[b])=>a.localeCompare(b))) {const row=document.createElement("tr");const label=document.createElement("th");label.textContent=key;const count=document.createElement("td");count.textContent=String(value);row.append(label,count);body.append(row);}
+  table.append(body);card.append(table);return card;
+}
+
+function renderError(error) {
+  const card = document.createElement("article"); card.className = "card error-card";
+  const title = document.createElement("h2"); title.textContent = "I couldn’t finish that request";
+  const detail = document.createElement("p"); detail.textContent = error?.message || "Please try again.";
+  card.append(title, detail); stage.replaceChildren(card);
+  for(const proposal of pendingProposals) stage.append(proposalCard(proposal,proposal.type==="category_create"?"Category change":"Item change"));
+  setDialog({icon:"error",message:"I couldn’t confirm how that request finished. Refresh proposals or check the inventory before retrying."});
+}
+
+function getConversationID() {
+  try {
+    const existing = localStorage.getItem("remventory-conversation"); if (existing && /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(existing)) return existing;
+    const id = makeUUID();
+    localStorage.setItem("remventory-conversation", id); return id;
+  } catch (_) { return makeUUID(); }
+}
+
+function makeUUID() {
+  if (globalThis.crypto?.randomUUID) return globalThis.crypto.randomUUID();
+  const bytes = new Uint8Array(16);
+  if (globalThis.crypto?.getRandomValues) globalThis.crypto.getRandomValues(bytes);
+  else for (let i=0;i<bytes.length;i++) bytes[i] = Math.floor(Math.random()*256);
+  bytes[6]=(bytes[6]&0x0f)|0x40; bytes[8]=(bytes[8]&0x3f)|0x80;
+  const hex=Array.from(bytes,b=>b.toString(16).padStart(2,"0")).join("");
+  return `${hex.slice(0,8)}-${hex.slice(8,12)}-${hex.slice(12,16)}-${hex.slice(16,20)}-${hex.slice(20)}`;
+}
+
+function currentFocusIDs() {
+  const ids = new Set();
+  const addMany = (values) => { if(Array.isArray(values)) for(const value of values) add(value); };
+  const add = (value) => { if (typeof value === "string" && value.length < 100) ids.add(value); };
+  const walk = (value) => {
+    if (!value || typeof value !== "object" || ids.size >= 30) return;
+    if (Array.isArray(value)) { for (const item of value) walk(item); return; }
+    add(value.id); add(value.item_id); add(value.category_id);
+    for (const [key, child] of Object.entries(value)) {if(key==="item_ids")addMany(child);if (key !== "images") walk(child);}
+  };
+  for (const component of currentResponse?.components || []) walk(component?.data);
+  return Array.from(ids).slice(0,30);
 }
 
 function categoryDefinition(category) {
@@ -279,6 +404,15 @@ function itemList(data) {
   const items = data.items || [];
   if (!items.length) card.insertAdjacentHTML("beforeend", `<p class="summary">No items yet.</p>`);
   else card.append(itemsTable(items, data.category || {}, "Items"));
+  if (data.has_more) { const more=document.createElement("button"); more.type="button"; more.className="secondary"; more.textContent="Load more"; more.addEventListener("click",()=>showCategoryItems(data.category,data.offset||items.length,true)); card.append(more); }
+  return card;
+}
+
+function itemCards(data) {
+  const card=document.createElement("article"); card.className="card item-card-collection";
+  const heading=document.createElement("h2"); heading.textContent=data?.title||"Items";card.append(heading);
+  const categories=data?.categories||[];const items=data?.matches||[];
+  for(const item of items) { const category=categories.find((candidate)=>candidate.id===item.category_id)||{};const detail=itemDetail({item,category});detail.classList.add("compact-item-card");card.append(detail); }
   return card;
 }
 
@@ -319,6 +453,7 @@ function openItemDetail(item, category) {
 }
 
 function categoryList(categories) {
+  if (!Array.isArray(categories)) categories = categories?.categories || [];
   const card = document.createElement("article");
   card.className = "card";
   card.innerHTML = `<h2>Categories</h2>`;
@@ -326,11 +461,36 @@ function categoryList(categories) {
   list.className = "category-list";
   for (const category of categories || []) {
     const li = document.createElement("li");
-    li.innerHTML = `<strong>${escapeHTML(category.name)}</strong><span>${escapeHTML(String((category.attributes || []).length))} attributes</span>`;
+    const button=document.createElement("button");button.type="button";button.className="category-browse-button";button.textContent=category.name;
+    button.addEventListener("click",()=>showCategoryItems(category));
+    const detail=document.createElement("span");detail.textContent=`${(category.attributes||[]).length} attributes`;
+    li.append(button,detail);
     list.append(li);
   }
   card.append(list);
   return card;
+}
+
+async function showBrowseCategories() {
+  if(activeController)return;
+  const generation=++requestGeneration;
+  try {
+    const response=await api("/api/categories?limit=100");
+    if(generation!==requestGeneration)return;
+    renderResponse({state:"completed",summary:"Browse your inventory by collection.",components:[{type:"category_list",data:response.categories||[]}]});
+  } catch(error) {renderError(error);}
+}
+
+async function showCategoryItems(category,offset=0,append=false) {
+  if(activeController)return;
+  const generation=++requestGeneration;
+  try {
+    const response=await api(`/api/items?category_id=${encodeURIComponent(category.id)}&limit=50&offset=${offset}`);
+    if(generation!==requestGeneration)return;
+    const previous=(currentResponse?.components||[]).find(c=>c.type==="item_list")?.data?.items||[];
+    const items=append?[...previous,...(response.items||[])]:response.items||[];
+    renderResponse({state:"completed",summary:`${category.name}: ${items.length} items shown.`,components:[{type:"item_list",data:{category,items,offset:offset+(response.items||[]).length,has_more:(response.items||[]).length===50}}]});
+  } catch(error) {renderError(error);}
 }
 
 function attributeDefinitionTable(attributes, title) {

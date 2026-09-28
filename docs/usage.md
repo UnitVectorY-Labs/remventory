@@ -10,7 +10,6 @@ Start Postgres, then run:
 export DATABASE_URL='postgres://remventory:remventory@localhost:5432/remventory?sslmode=disable'
 export OPENAI_BASE_URL='http://localhost:11434/v1'
 export OPENAI_MAIN_MODEL='general-instruct-model'
-export OPENAI_THINKING_MODEL='reasoning-model'
 go run .
 ```
 
@@ -41,6 +40,45 @@ When `REMVENTORY_ACCESS_TOKEN` is set:
 curl -H "Authorization: Bearer $REMVENTORY_ACCESS_TOKEN" http://localhost:8080/api/categories
 ```
 
+## Smoke-Test Remy
+
+With a populated test database and a configured model endpoint, the opt-in scenario script checks exact inventory totals, the requested item-card presentation, and a follow-up comparison that uses item references from the prior turn:
+
+```sh
+REMVENTORY_BASE_URL=http://localhost:8080 python3 scripts/live-remy-smoke.py
+```
+
+Prepare a disposable, otherwise empty database and seed its known 254 records / 256 units:
+
+```sh
+psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f scripts/smoke-seed.sql
+```
+
+The seed refuses to run if it finds any category outside the two smoke collections. The scenario script also requires `REMVENTORY_SMOKE_DISPOSABLE=YES`; it creates and revises one pending quantity proposal, and never approves it. Reset or discard the disposable database after the run.
+
+Run the app and script once with each model alias as the main agent model, resetting the seed between runs:
+
+Start the application in a terminal with the first alias:
+
+```sh
+OPENAI_BASE_URL=https://llm.unitvectory-labs.net/v1 OPENAI_MAIN_MODEL=qwen38-27b-q6kxl-instruct go run .
+```
+
+In another terminal, run the scenario:
+
+```sh
+REMVENTORY_SMOKE_DISPOSABLE=YES REMVENTORY_BASE_URL=http://localhost:8080 python3 scripts/live-remy-smoke.py
+```
+
+Stop the first app, refresh the fixture, then start it with the generic alias and rerun the script:
+
+```sh
+psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f scripts/smoke-seed.sql
+OPENAI_BASE_URL=https://llm.unitvectory-labs.net/v1 OPENAI_MAIN_MODEL=qwen38-27b-q6kxl-generic go run .
+```
+
+The app uses the main model for tool and presentation decisions; the generic model's separate `reasoning_content` field is ignored. The scenario checks 254 records and 256 units, retrieves `Archive Game 250` past the prior 200-item bound, chooses item cards and comparison views, and revises a proposal while it remains pending.
+
 ## MCP
 
 MCP clients can connect to the streamable HTTP endpoint:
@@ -49,11 +87,11 @@ MCP clients can connect to the streamable HTTP endpoint:
 http://localhost:8080/mcp
 ```
 
-The MCP tool surface includes category reads, category create/update/delete proposals, item create/update/delete/quantity proposals, proposal confirmation, item listing, inventory queries, and Remy requests. Every data-changing action still produces a proposal first.
+The MCP tool surface includes paged category and item reads, server-side inventory search and aggregation, Remy requests with a reusable session ID, category and item proposals, in-place proposal revision, and explicit proposal confirmation. Every data-changing action still produces a proposal first.
 
 ## Working with Remy
 
-Use the composer to create, update, remove, or browse inventory. Press Enter to send and Shift+Enter for a new line. Remy's top dialog shows what he is working on and briefly comments on the result. The edit icon starts a fresh chat without changing inventory.
+Use natural language with Remy as the primary way to search, compare, and propose inventory changes. Select **Browse inventory** for the supporting category and item browser. Press Enter to send and Shift+Enter for a new line. Remy's dialog shows the current work state; the edit icon starts a fresh conversation without changing inventory.
 
 Remy shows category attributes and item values in tables. When proposing an item, it only includes details stated in the request (or already stored on an item being updated); missing details remain blank rather than being guessed. Approve or reject the proposal in the page—rejection does not change inventory.
 

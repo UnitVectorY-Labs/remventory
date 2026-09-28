@@ -117,6 +117,84 @@ type ProposalDecision struct {
 	Reason  string `json:"reason,omitempty"`
 }
 
+type ConversationTurn struct {
+	Role       string   `json:"role"`
+	Content    string   `json:"content"`
+	References []string `json:"references,omitempty"`
+}
+
+func (s *Store) Conversation(ctx context.Context, id string) ([]ConversationTurn, error) {
+	var turns []ConversationTurn
+	err := s.pool.QueryRow(ctx, `select turns from remy_conversations where id=$1`, id).Scan(&turns)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, nil
+	}
+	return turns, err
+}
+
+func (s *Store) AppendConversation(ctx context.Context, id string, turn ConversationTurn) error {
+	if turn.Role != "user" && turn.Role != "assistant" {
+		return errors.New("invalid conversation role")
+	}
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+	var turns []ConversationTurn
+	err = tx.QueryRow(ctx, `select turns from remy_conversations where id=$1 for update`, id).Scan(&turns)
+	if errors.Is(err, pgx.ErrNoRows) {
+		turns = nil
+	} else if err != nil {
+		return err
+	}
+	turns = append(turns, turn)
+	if len(turns) > 24 {
+		turns = turns[len(turns)-24:]
+	}
+	encoded, err := json.Marshal(turns)
+	if err != nil {
+		return err
+	}
+	_, err = tx.Exec(ctx, `insert into remy_conversations(id,turns) values($1,$2) on conflict(id) do update set turns=excluded.turns, updated_at=now()`, id, encoded)
+	if err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
+}
+
+func (s *Store) AppendConversationTurns(ctx context.Context, id string, newTurns ...ConversationTurn) error {
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+	if _, err = tx.Exec(ctx, `insert into remy_conversations(id,turns) values($1,'[]'::jsonb) on conflict(id) do nothing`, id); err != nil {
+		return err
+	}
+	var turns []ConversationTurn
+	if err = tx.QueryRow(ctx, `select turns from remy_conversations where id=$1 for update`, id).Scan(&turns); err != nil {
+		return err
+	}
+	for _, turn := range newTurns {
+		if turn.Role != "user" && turn.Role != "assistant" {
+			return errors.New("invalid conversation role")
+		}
+		turns = append(turns, turn)
+	}
+	if len(turns) > 24 {
+		turns = turns[len(turns)-24:]
+	}
+	encoded, err := json.Marshal(turns)
+	if err != nil {
+		return err
+	}
+	if _, err = tx.Exec(ctx, `update remy_conversations set turns=$2,updated_at=now() where id=$1`, id, encoded); err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
+}
+
 func Open(ctx context.Context, databaseURL string) (*Store, error) {
 	pool, err := pgxpool.New(ctx, databaseURL)
 	if err != nil {
@@ -267,27 +345,33 @@ func (s *Store) GetCategoryDefinition(ctx context.Context, categoryID string) (C
 }
 
 func (s *Store) CreateCategoryProposal(ctx context.Context, payload CategoryProposalPayload) (Proposal, error) {
-	if err := validateCategoryProposalPayload(&payload); err != nil {
-		return Proposal{}, err
-	}
-	if payload.Operation == "delete" && strings.TrimSpace(payload.Name) == "" {
+	if (payload.Operation == "update" || payload.Operation == "delete") && payload.CategoryID != "" {
 		category, err := s.GetCategoryDefinition(ctx, payload.CategoryID)
 		if err != nil {
 			return Proposal{}, err
 		}
-		payload.Name = category.Name
-		payload.Description = category.Description
-		payload.Attributes = make([]AttributeDraft, 0, len(category.Attributes))
-		for _, attribute := range category.Attributes {
-			payload.Attributes = append(payload.Attributes, AttributeDraft{
-				Key:          attribute.Key,
-				Label:        attribute.Label,
-				DataType:     attribute.DataType,
-				Required:     attribute.Required,
-				DisplayOrder: attribute.DisplayOrder,
-				Config:       attribute.Config,
-			})
+		if strings.TrimSpace(payload.Name) == "" {
+			payload.Name = category.Name
 		}
+		if strings.TrimSpace(payload.Description) == "" {
+			payload.Description = category.Description
+		}
+		if len(payload.Attributes) == 0 {
+			payload.Attributes = make([]AttributeDraft, 0, len(category.Attributes))
+			for _, attribute := range category.Attributes {
+				payload.Attributes = append(payload.Attributes, AttributeDraft{
+					Key:          attribute.Key,
+					Label:        attribute.Label,
+					DataType:     attribute.DataType,
+					Required:     attribute.Required,
+					DisplayOrder: attribute.DisplayOrder,
+					Config:       attribute.Config,
+				})
+			}
+		}
+	}
+	if err := validateCategoryProposalPayload(&payload); err != nil {
+		return Proposal{}, err
 	}
 	return s.createProposal(ctx, DefaultUserID, "category_create", payload)
 }
@@ -332,6 +416,26 @@ func (s *Store) GetProposal(ctx context.Context, proposalID string) (Proposal, e
 		return Proposal{}, ErrNotFound
 	}
 	return proposal, err
+}
+
+func (s *Store) ListPendingProposals(ctx context.Context, limit int) ([]Proposal, error) {
+	if limit < 1 || limit > 100 {
+		limit = 30
+	}
+	rows, err := s.pool.Query(ctx, `select id,user_id,type,status,proposed_payload_jsonb as proposed_payload,coalesce(reason,'') as reason,created_at,decided_at from proposals where user_id=$1 and status='pending' order by created_at desc limit $2`, DefaultUserID, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	proposals := []Proposal{}
+	for rows.Next() {
+		var p Proposal
+		if err := rows.Scan(&p.ID, &p.UserID, &p.Type, &p.Status, &p.ProposedPayload, &p.Reason, &p.CreatedAt, &p.DecidedAt); err != nil {
+			return nil, err
+		}
+		proposals = append(proposals, p)
+	}
+	return proposals, rows.Err()
 }
 
 func (s *Store) RevisePendingProposal(ctx context.Context, proposalID string, payload json.RawMessage) (Proposal, error) {
@@ -757,6 +861,122 @@ func (s *Store) ListItems(ctx context.Context, categoryID string, limit, offset 
 		}
 	}
 	return items, nil
+}
+
+// SearchInventory performs filtering, ordering, pagination, and exact counting in Postgres.
+// The agent receives only the requested page, even when the inventory is large.
+func (s *Store) SearchInventory(ctx context.Context, query, categoryID, attributeKey, attributeValue string, limit, offset int) ([]Item, int, error) {
+	if limit < 1 || limit > 100 {
+		limit = 50
+	}
+	if offset < 0 {
+		offset = 0
+	}
+	where := `($1 = '' or lower(i.title || ' ' || i.attributes_jsonb::text) like '%' || lower($1) || '%')
+		and ($2 = '' or i.category_id = $2::uuid)
+		and ($3 = '' or lower(coalesce(i.attributes_jsonb ->> $3, '')) = lower($4))`
+	var total int
+	if err := s.pool.QueryRow(ctx, `select count(*) from items i where `+where, query, categoryID, attributeKey, attributeValue).Scan(&total); err != nil {
+		return nil, 0, err
+	}
+	rows, err := s.pool.Query(ctx, `select i.id, i.user_id, i.category_id, i.title, i.attributes_jsonb as attributes, i.quantity, i.created_at, i.updated_at
+		from items i where `+where+` order by lower(i.title), i.created_at, i.id limit $5 offset $6`, query, categoryID, attributeKey, attributeValue, limit, offset)
+	if err != nil {
+		return nil, 0, err
+	}
+	items, err := pgx.CollectRows(rows, pgx.RowToStructByName[Item])
+	if err != nil {
+		return nil, 0, err
+	}
+	if err := s.HydrateItemImages(ctx, items); err != nil {
+		return nil, 0, err
+	}
+	return items, total, nil
+}
+
+// HydrateItemImages loads pictures for a bounded item page with one query.
+func (s *Store) HydrateItemImages(ctx context.Context, items []Item) error {
+	if len(items) == 0 {
+		return nil
+	}
+	ids := make([]string, 0, len(items))
+	for _, item := range items {
+		ids = append(ids, item.ID)
+	}
+	rows, err := s.pool.Query(ctx, `select id,item_id,object_key as original_key,coalesce(thumbnail_object_key,'') as thumbnail_key,mime_type,original_filename,width,height,size_bytes,created_at from item_assets where item_id::text=any($1::text[]) order by created_at,id`, ids)
+	if err != nil {
+		return err
+	}
+	images, err := pgx.CollectRows(rows, pgx.RowToStructByName[ItemImage])
+	if err != nil {
+		return err
+	}
+	byItem := map[string][]ItemImage{}
+	for _, image := range images {
+		byItem[image.ItemID] = append(byItem[image.ItemID], image)
+	}
+	for i := range items {
+		items[i].Images = byItem[items[i].ID]
+	}
+	return nil
+}
+
+// AggregateInventory computes deterministic inventory summaries in Postgres.
+func (s *Store) AggregateInventory(ctx context.Context, categoryID, metric, attributeKey, filterKey, filterValue string) (map[string]any, error) {
+	where := `($1 = '' or category_id = $1::uuid) and ($2 = '' or lower(coalesce(attributes_jsonb ->> $2, '')) = lower($3))`
+	result := map[string]any{}
+	var records int
+	if err := s.pool.QueryRow(ctx, `select count(*) from items where `+where, categoryID, filterKey, filterValue).Scan(&records); err != nil {
+		return nil, err
+	}
+	result["records"] = records
+	switch metric {
+	case "records":
+	case "units":
+		var n int
+		if err := s.pool.QueryRow(ctx, `select coalesce(sum(quantity),0) from items where `+where, categoryID, filterKey, filterValue).Scan(&n); err != nil {
+			return nil, err
+		}
+		result["units"] = n
+	case "min", "max":
+		var n *float64
+		fn := "min"
+		if metric == "max" {
+			fn = "max"
+		}
+		err := s.pool.QueryRow(ctx, `select `+fn+`(nullif(attributes_jsonb ->> $4,'')::numeric) from items where `+where, categoryID, filterKey, filterValue, attributeKey).Scan(&n)
+		if err != nil {
+			return nil, err
+		}
+		if n == nil {
+			return nil, fmt.Errorf("no numeric values for %s", attributeKey)
+		}
+		result[metric] = *n
+	case "group":
+		return nil, errors.New("group metric requires grouped query")
+	default:
+		return nil, errors.New("unsupported aggregate metric")
+	}
+	return result, nil
+}
+
+func (s *Store) GroupInventory(ctx context.Context, categoryID, groupBy, filterKey, filterValue string) (map[string]int, error) {
+	rows, err := s.pool.Query(ctx, `select coalesce(attributes_jsonb ->> $2, 'Unspecified'), count(*) from items
+		where ($1 = '' or category_id = $1::uuid) and ($3 = '' or lower(coalesce(attributes_jsonb ->> $3, '')) = lower($4)) group by 1 order by 1`, categoryID, groupBy, filterKey, filterValue)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[string]int{}
+	for rows.Next() {
+		var key string
+		var count int
+		if err := rows.Scan(&key, &count); err != nil {
+			return nil, err
+		}
+		out[key] = count
+	}
+	return out, rows.Err()
 }
 
 func (s *Store) GetItem(ctx context.Context, itemID string) (Item, error) {

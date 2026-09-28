@@ -17,9 +17,10 @@ func New(version string, repo *store.Store, remyService *remy.Service) *mcpserve
 		mcp.NewTool("remy_request",
 			mcp.WithDescription("Send a natural-language inventory request to Remy. Data-changing requests return proposals, not committed changes."),
 			mcp.WithString("message", mcp.Description("Natural-language request for Remy.")),
+			mcp.WithString("session_id", mcp.Description("Optional UUID conversation ID to continue a prior Remy request.")),
 		),
 		func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-			result, err := remyService.Handle(ctx, remy.Request{Message: request.GetString("message", "")})
+			result, err := remyService.Handle(ctx, remy.Request{Message: request.GetString("message", ""), SessionID: request.GetString("session_id", "")})
 			if err != nil {
 				return mcp.NewToolResultError(err.Error()), nil
 			}
@@ -57,6 +58,38 @@ func New(version string, repo *store.Store, remyService *remy.Service) *mcpserve
 	)
 
 	server.AddTool(
+		mcp.NewTool("search_inventory",
+			mcp.WithDescription("Search all inventory server-side. Returns a bounded page, exact total, and has_more."),
+			mcp.WithString("query", mcp.Description("Optional title or attribute text.")),
+			mcp.WithString("category_id", mcp.Description("Optional category UUID.")),
+			mcp.WithString("attribute_key", mcp.Description("Optional exact attribute key.")),
+			mcp.WithString("attribute_value", mcp.Description("Optional exact attribute value.")),
+			mcp.WithNumber("limit", mcp.Description("Page size, up to 100.")),
+			mcp.WithNumber("offset", mcp.Description("Page offset.")),
+		),
+		func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+			result, err := remyService.Search(ctx, request.GetString("query", ""), request.GetString("category_id", ""), request.GetString("attribute_key", ""), request.GetString("attribute_value", ""), request.GetInt("limit", 50), request.GetInt("offset", 0))
+			if err != nil {
+				return mcp.NewToolResultError(err.Error()), nil
+			}
+			return mcp.NewToolResultStructuredOnly(result), nil
+		},
+	)
+	server.AddTool(
+		mcp.NewTool("aggregate_inventory",
+			mcp.WithDescription("Compute exact deterministic record/unit totals, numeric min/max, or grouped counts using server-side SQL."),
+			mcp.WithString("category_id", mcp.Description("Optional category UUID.")), mcp.WithString("metric", mcp.Description("records, units, min, max, or group.")), mcp.WithString("attribute_key", mcp.Description("Numeric attribute for min/max.")), mcp.WithString("group_by", mcp.Description("Attribute key for group metric.")), mcp.WithString("filter_key", mcp.Description("Optional exact filter attribute.")), mcp.WithString("filter_value", mcp.Description("Optional exact filter value.")),
+		),
+		func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+			result, err := remyService.Aggregate(ctx, request.GetString("category_id", ""), request.GetString("metric", ""), request.GetString("attribute_key", ""), request.GetString("group_by", ""), request.GetString("filter_key", ""), request.GetString("filter_value", ""))
+			if err != nil {
+				return mcp.NewToolResultError(err.Error()), nil
+			}
+			return mcp.NewToolResultStructuredOnly(result), nil
+		},
+	)
+
+	server.AddTool(
 		mcp.NewTool("propose_category_change",
 			mcp.WithDescription("Create a pending proposal to create, update, or delete a category and its attributes. This does not commit data."),
 			mcp.WithString("operation", mcp.Description("create, update, or delete.")),
@@ -70,7 +103,7 @@ func New(version string, repo *store.Store, remyService *remy.Service) *mcpserve
 			if err != nil {
 				return mcp.NewToolResultError(err.Error()), nil
 			}
-			proposal, err := repo.CreateCategoryProposal(ctx, store.CategoryProposalPayload{
+			proposal, err := remyService.ProposeCategoryChange(ctx, store.CategoryProposalPayload{
 				Operation:   request.GetString("operation", "create"),
 				CategoryID:  request.GetString("category_id", ""),
 				Name:        request.GetString("name", ""),
@@ -100,7 +133,7 @@ func New(version string, repo *store.Store, remyService *remy.Service) *mcpserve
 			if err != nil || string(attributes) == "null" {
 				attributes = []byte(`{}`)
 			}
-			proposal, err := repo.CreateItemProposal(ctx, store.ItemProposalPayload{
+			proposal, err := remyService.ProposeItemChange(ctx, store.ItemProposalPayload{
 				Operation:     request.GetString("operation", "create"),
 				CategoryID:    request.GetString("category_id", ""),
 				ItemID:        request.GetString("item_id", ""),
@@ -128,6 +161,24 @@ func New(version string, repo *store.Store, remyService *remy.Service) *mcpserve
 				Approve: request.GetBool("approve", false),
 				Reason:  request.GetString("reason", ""),
 			})
+			if err != nil {
+				return mcp.NewToolResultError(err.Error()), nil
+			}
+			return mcp.NewToolResultStructuredOnly(proposal), nil
+		},
+	)
+	server.AddTool(
+		mcp.NewTool("revise_pending_proposal",
+			mcp.WithDescription("Revise a pending proposal in place after the user asks for a correction. This does not approve or commit it."),
+			mcp.WithString("proposal_id", mcp.Description("Pending proposal ID.")),
+			mcp.WithObject("proposed_payload", mcp.Description("Complete revised category or item proposal payload.")),
+		),
+		func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+			raw, err := json.Marshal(request.GetArguments()["proposed_payload"])
+			if err != nil {
+				return mcp.NewToolResultError(err.Error()), nil
+			}
+			proposal, err := remyService.RevisePendingProposal(ctx, request.GetString("proposal_id", ""), raw)
 			if err != nil {
 				return mcp.NewToolResultError(err.Error()), nil
 			}

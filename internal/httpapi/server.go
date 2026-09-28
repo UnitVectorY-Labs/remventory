@@ -62,6 +62,7 @@ func New(opts Options) http.Handler {
 	mux.HandleFunc("POST /api/proposals/category", api.withToken(api.createCategoryProposal))
 	mux.HandleFunc("POST /api/proposals/item", api.withToken(api.createItemProposal))
 	mux.HandleFunc("GET /api/proposals/{id}", api.withToken(api.getProposal))
+	mux.HandleFunc("GET /api/proposals", api.withToken(api.listPendingProposals))
 	mux.HandleFunc("POST /api/proposals/{id}/decision", api.withToken(api.decideProposal))
 
 	return mux
@@ -124,10 +125,10 @@ func (a api) ready(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, status, body)
 		return
 	}
-	if a.cfg.MainModel == "" || a.cfg.ThinkingModel == "" {
+	if a.cfg.MainModel == "" {
 		status = http.StatusServiceUnavailable
 		body["status"] = "not_ready"
-		body["model"] = "main_or_thinking_not_configured"
+		body["model"] = "main_not_configured"
 	}
 
 	if err := a.store.Ping(r.Context()); err != nil {
@@ -451,6 +452,21 @@ func (a api) getProposal(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusOK, proposal)
+}
+
+func (a api) listPendingProposals(w http.ResponseWriter, r *http.Request) {
+	if a.store == nil {
+		writeError(w, http.StatusServiceUnavailable, "database is not configured")
+		return
+	}
+	limit := queryInt(r, "limit", 30)
+	proposals, err := a.store.ListPendingProposals(r.Context(), limit)
+	if err != nil {
+		a.logger.Error("list pending proposals", "error", err)
+		writeError(w, http.StatusInternalServerError, "list proposals")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"proposals": proposals})
 }
 
 func (a api) decideProposal(w http.ResponseWriter, r *http.Request) {

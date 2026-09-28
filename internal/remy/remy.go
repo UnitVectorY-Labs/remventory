@@ -13,11 +13,9 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"github.com/UnitVectorY-Labs/remventory/internal/agentruntime"
 	"github.com/UnitVectorY-Labs/remventory/internal/agui"
 	"github.com/UnitVectorY-Labs/remventory/internal/config"
 	"github.com/UnitVectorY-Labs/remventory/internal/store"
-	"google.golang.org/adk/agent"
 )
 
 //go:embed prompts/*.txt
@@ -29,13 +27,14 @@ type Service struct {
 	cfg            config.Config
 	store          *store.Store
 	client         *http.Client
-	agent          agent.Agent
 	dialogSequence atomic.Uint64
 }
 
 type Request struct {
-	Message string          `json:"message"`
-	Context *VisibleContext `json:"context,omitempty"`
+	Message   string          `json:"message"`
+	SessionID string          `json:"session_id,omitempty"`
+	Focus     []string        `json:"focus_ids,omitempty"`
+	Context   *VisibleContext `json:"context,omitempty"`
 }
 
 type DialogRequest struct {
@@ -51,6 +50,7 @@ type DialogResponse struct {
 
 type Response struct {
 	State          string       `json:"state"`
+	SessionID      string       `json:"session_id,omitempty"`
 	Summary        string       `json:"summary"`
 	RequestSummary string       `json:"request_summary,omitempty"`
 	Components     []Component  `json:"components"`
@@ -139,14 +139,12 @@ var dialogVariationHints = []string{
 }
 
 func New(cfg config.Config, repo *store.Store) *Service {
-	remyAgent, _ := agentruntime.NewRemyAgent(cfg)
 	return &Service{
 		cfg:   cfg,
 		store: repo,
 		client: &http.Client{
 			Timeout: 45 * time.Second,
 		},
-		agent: remyAgent,
 	}
 }
 
@@ -159,43 +157,7 @@ func (s *Service) Handle(ctx context.Context, req Request) (Response, error) {
 	if message == "" {
 		return Response{}, errors.New("message is required")
 	}
-
-	categories, err := s.store.ListCategories(ctx, 100, 0)
-	if err != nil {
-		return Response{}, err
-	}
-
-	action, err := s.planRequest(ctx, message, categories, req.Context)
-	if err != nil {
-		return Response{}, err
-	}
-	var response Response
-	switch action {
-	case "category_change":
-		response, err = s.proposeCategory(ctx, message, categories)
-	case "category_definition":
-		response, err = s.categoryDefinition(ctx, message, categories)
-	case "query_inventory":
-		response, err = s.queryInventory(ctx, message, categories)
-	case "list_items":
-		response, err = s.listItems(ctx, message, categories)
-	case "item_change":
-		response, err = s.proposeItem(ctx, message, categories)
-	case "revise_proposal":
-		response, err = s.reviseProposal(ctx, message, req.Context)
-	case "answer_context":
-		response, err = s.answerContext(ctx, message, req.Context)
-	default:
-		response = withEvents(Response{
-			State:      "completed",
-			Components: []Component{},
-		})
-	}
-	if err != nil {
-		return Response{}, err
-	}
-	response.RequestSummary = s.summarizeRequest(ctx, message)
-	return response, nil
+	return s.handleAgent(ctx, req, message)
 }
 
 func (s *Service) Dialog(ctx context.Context, req DialogRequest) (DialogResponse, error) {
