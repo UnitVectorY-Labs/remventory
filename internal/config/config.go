@@ -57,7 +57,7 @@ func (c Config) PublicStatus() map[string]any {
 	return map[string]any{
 		"http_addr":                 c.HTTPAddr,
 		"database_configured":       c.DatabaseURL != "",
-		"model_configured":          c.MainModel != "" && c.ThinkingModel != "",
+		"model_configured":          c.MainModel != "",
 		"tiny_model_configured":     c.TinyModel != "",
 		"main_model_configured":     c.MainModel != "",
 		"thinking_model_configured": c.ThinkingModel != "",

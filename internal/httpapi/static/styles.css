@@ -79,7 +79,7 @@ input {
 
 .remy-panel {
   display: grid;
-  grid-template-columns: 76px minmax(220px, 1fr) auto;
+  grid-template-columns: 76px minmax(180px, 1fr) auto auto;
   align-items: center;
   gap: 20px;
   padding: 18px 20px;
@@ -308,6 +308,10 @@ th {
   color: var(--muted);
   white-space: nowrap;
 }
+
+.category-browse-button { border:0; padding:0; background:transparent; color:var(--ink); font:inherit; font-weight:700; cursor:pointer; text-align:left; }
+.category-browse-button:hover { color:var(--accent); text-decoration:underline; }
+.compact-item-card { margin:12px 0; box-shadow:none; }
 
 .grid {
   display: grid;
@@ -718,7 +722,11 @@ pre {
 
   .remy-dialog {
     min-height: 64px;
+    grid-column: 2 / 4;
   }
+
+  #new-chat { grid-column:3; grid-row:1; }
+  #browse-inventory { grid-column:2; grid-row:2; justify-self:start; }
 
   .remy-dialog::before {
     top: 25px;
@@ -758,3 +766,7 @@ pre {
     min-height: 230px;
   }
 }
+
+.remy-answer { white-space: pre-wrap; line-height: 1.6; font-size: 1.05rem; }
+.statistic-card strong { display: block; font-size: 2.5rem; color: var(--accent, #526447); }
+.error-card { border-color: #a43d35; }

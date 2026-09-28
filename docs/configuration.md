@@ -2,15 +2,14 @@
 
 Remventory is configured with environment variables. The prototype is intended to run as one application container connected to Postgres and an OpenAI-compatible model endpoint.
 
-`DATABASE_URL`, `OPENAI_MAIN_MODEL`, and `OPENAI_THINKING_MODEL` are required for the application to report ready. Remy's short, structured dialog messages use the main non-thinking model; deeper matching and proposal reasoning use the thinking model. Image uploads additionally require the S3-compatible settings below.
+`DATABASE_URL` and `OPENAI_MAIN_MODEL` are required for the application to report ready. The main model runs Remy's tool-using agent over the OpenAI-compatible chat-completions API. `OPENAI_THINKING_MODEL` is optional and remains available to the separate inventory-query endpoint. Image uploads additionally require the S3-compatible settings below.
 
 ## Required for a useful run
 
 | Variable | Purpose | Example |
 |---|---|---|
 | `DATABASE_URL` | Postgres connection string. | `postgres://remventory:remventory@localhost:5432/remventory?sslmode=disable` |
-| `OPENAI_MAIN_MODEL` | Non-thinking model for Remy's dialog, intent classification, category selection, and structured extraction. | `qwen36-35b-a3b-q6kxl-instruct` |
-| `OPENAI_THINKING_MODEL` | Thinking model for inventory matching, visible-context questions, and proposal revision. | `qwen36-35b-a3b-q6kxl-generic` |
+| `OPENAI_MAIN_MODEL` | OpenAI-compatible model used by Remy's agent, tool selection, and presentation selection. | `qwen38-27b-q6kxl-instruct` |
 
 ## Optional
 
@@ -20,6 +19,7 @@ Remventory is configured with environment variables. The prototype is intended t
 | `OPENAI_BASE_URL` | `http://localhost:11434/v1` | OpenAI-compatible API base URL. |
 | `OPENAI_API_KEY` | empty | API key or token for the model endpoint. |
 | `OPENAI_MODEL` | empty | Backward-compatible fallback for both main model tiers. Prefer the explicit variables above. |
+| `OPENAI_THINKING_MODEL` | empty | Optional model for the separate inventory-query endpoint. Remy's agent uses `OPENAI_MAIN_MODEL`. |
 | `REMVENTORY_ACCESS_TOKEN` | empty | Optional bearer token gate for application API routes. |
 | `REMVENTORY_DEFAULT_USER_NAME` | `Remventory User` | Display name for the prototype default user. |
 | `REMVENTORY_AUTO_MIGRATE` | `true` | Runs built-in Postgres migrations on startup. |
