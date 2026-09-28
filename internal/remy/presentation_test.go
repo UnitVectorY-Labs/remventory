@@ -1,8 +1,10 @@
 package remy
 
 import (
-	"github.com/UnitVectorY-Labs/remventory/internal/store"
+	"slices"
 	"testing"
+
+	"github.com/UnitVectorY-Labs/remventory/internal/store"
 )
 
 func TestPresentationLibraryAllowsLLMToChooseDifferentViews(t *testing.T) {
@@ -48,5 +50,25 @@ func TestComparisonRowsUseCanonicalInventoryItems(t *testing.T) {
 	rows := comparisonRows(map[string]any{"matches": items})
 	if len(rows) != 3 || rows[1][0] != "Lamp" || rows[2][0] != "Chair" {
 		t.Fatalf("comparison rows = %#v", rows)
+	}
+}
+
+func TestOmittedToolQuantityRemainsUnset(t *testing.T) {
+	if got := intArg(map[string]any{}, "quantity", 0); got != 0 {
+		t.Fatalf("omitted quantity = %d, want 0 so updates preserve stored quantity", got)
+	}
+	if got := intArg(map[string]any{"quantity": float64(4)}, "quantity", 0); got != 4 {
+		t.Fatalf("explicit quantity = %d, want 4", got)
+	}
+}
+
+func TestComponentReferencesCaptureComparisonItemIDs(t *testing.T) {
+	first := "21000000-0000-0000-0000-000000000001"
+	second := "21000000-0000-0000-0000-000000000002"
+	for _, itemIDs := range []any{[]string{first, second}, []any{first, second}} {
+		refs := componentReferences([]Component{{Type: "comparison", Data: map[string]any{"item_ids": itemIDs}}})
+		if !slices.Contains(refs, first) || !slices.Contains(refs, second) {
+			t.Fatalf("comparison references = %v, want both item IDs", refs)
+		}
 	}
 }

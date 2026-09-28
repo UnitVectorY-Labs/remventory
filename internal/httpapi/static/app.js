@@ -20,7 +20,6 @@ let currentResponse = null;
 let pendingProposals = [];
 let conversationID = getConversationID();
 let requestGeneration = 0;
-const renderableComponentTypes = new Set(["category_proposal", "item_proposal", "item_detail", "category_definition", "item_list", "item_cards", "query_result", "category_list", "statistic", "grouped_statistic", "comparison", "clarification"]);
 
 showConfigurationStatus();
 refreshPendingProposals().catch(() => {});
@@ -79,7 +78,6 @@ async function askRemy(message) {
   const generation = ++requestGeneration;
   activeController = new AbortController();
   activeMessage = message;
-  const context = visibleContext(currentResponse);
   setWorking(message);
   try {
     setDialog({ icon: "thinking", message: "I’m checking the collection and getting the useful details together." });
@@ -174,19 +172,6 @@ async function refreshPendingProposals(rerender = true) {
   }
 }
 
-function visibleContext(response) {
-  if (!response) return null;
-  return { state: response.state, summary: response.summary, request_summary: response.request_summary, components: response.components || [] };
-}
-
-function bodyContentChanged(before, after) {
-  return JSON.stringify(bodyComponents(before)) !== JSON.stringify(bodyComponents(after));
-}
-
-function bodyComponents(response) {
-  return (response?.components || []).filter((component) => renderableComponentTypes.has(component.type));
-}
-
 function renderComponent(component) {
   switch (component.type) {
     case "category_proposal": return proposalCard(component.data, "Category change");
@@ -252,7 +237,6 @@ async function decide(id, approve) {
   const generation = ++requestGeneration;
   activeController = new AbortController();
   activeMessage = approve ? "Approve this proposal" : "Reject this proposal";
-  const context = visibleContext(currentResponse);
   setWorking(activeMessage);
   try {
     setDialog({ icon: "thinking", message: "I’m recording your decision." });
@@ -727,49 +711,6 @@ function setWorking(message) {
   sendButton.hidden = true;
   stopRequest.hidden = false;
   stopRequest.disabled = false;
-}
-
-async function fetchDialog(phase, message, context, signal) {
-  try {
-    return await api("/api/remy/dialog", {
-      method: "POST",
-      body: JSON.stringify({ phase, message, context }),
-      signal,
-    });
-  } catch (error) {
-    if (error.name === "AbortError") throw error;
-    return null;
-  }
-}
-
-async function waitForWorkingDialog(shownAt, signal) {
-  if (!shownAt) return;
-  const remaining = minimumWorkingDialogMs - (Date.now() - shownAt);
-  if (remaining <= 0) return;
-  await abortableDelay(remaining, signal);
-}
-
-function abortableDelay(milliseconds, signal) {
-  return new Promise((resolve, reject) => {
-    const timer = window.setTimeout(() => {
-      signal?.removeEventListener("abort", abort);
-      resolve();
-    }, milliseconds);
-    const abort = () => {
-      window.clearTimeout(timer);
-      const error = new Error("Request stopped");
-      error.name = "AbortError";
-      reject(error);
-    };
-    if (signal?.aborted) abort();
-    else signal?.addEventListener("abort", abort, { once: true });
-  });
-}
-
-function completionFallback(response) {
-  if (response?.state === "error") return { icon: "error", message: "I hit a snag while handling that request." };
-  if (!(response?.components || []).length) return { icon: "ready", message: "I’m best at inventory—try asking me to add, update, find, or organize an item." };
-  return { icon: response.state === "proposing" ? "cataloging" : "celebrating", message: "I’ve put your inventory details in view and ready to review." };
 }
 
 function setDialog(response) {

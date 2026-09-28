@@ -7,10 +7,24 @@ Run once for each configured main-model alias against a populated disposable dat
 import json
 import os
 import urllib.error
+import urllib.parse
 import urllib.request
 import uuid
 
-base = os.environ.get("REMVENTORY_BASE_URL", "http://localhost:8080").rstrip("/")
+raw_base = os.environ.get("REMVENTORY_BASE_URL", "http://localhost:8080")
+parsed_base = urllib.parse.urlsplit(raw_base)
+if (
+    parsed_base.scheme not in ("http", "https")
+    or not parsed_base.hostname
+    or parsed_base.username
+    or parsed_base.password
+    or parsed_base.query
+    or parsed_base.fragment
+):
+    raise SystemExit("REMVENTORY_BASE_URL must be an HTTP(S) origin or path without credentials, query, or fragment")
+base = urllib.parse.urlunsplit(
+    (parsed_base.scheme, parsed_base.netloc, parsed_base.path.rstrip("/"), "", "")
+)
 token = os.environ.get("REMVENTORY_ACCESS_TOKEN", "")
 if os.environ.get("REMVENTORY_SMOKE_DISPOSABLE") != "YES":
     raise SystemExit("Refusing to run without REMVENTORY_SMOKE_DISPOSABLE=YES; this scenario creates a pending proposal")
@@ -29,7 +43,8 @@ def request(message):
         headers["Authorization"] = "Bearer " + token
     req = urllib.request.Request(base + "/api/remy/request", data=body, headers=headers)
     try:
-        with urllib.request.urlopen(req, timeout=180) as response:
+        # The URL is derived from the validated HTTP(S) base above.
+        with urllib.request.urlopen(req, timeout=180) as response:  # nosemgrep
             result = json.load(response)
     except urllib.error.HTTPError as exc:
         raise SystemExit(f"Remy request failed ({exc.code}): {exc.read().decode(errors='replace')}")
@@ -106,7 +121,9 @@ if "comparison" not in types:
 def get_json(path):
     headers={}
     if token: headers["Authorization"]="Bearer "+token
-    with urllib.request.urlopen(urllib.request.Request(base+path,headers=headers),timeout=20) as response:
+    request = urllib.request.Request(base + path, headers=headers)
+    # The URL is derived from the validated HTTP(S) base above.
+    with urllib.request.urlopen(request, timeout=20) as response:  # nosemgrep
         return json.load(response)
 
 # Proposal creation/revision are limited to a database explicitly declared disposable above.

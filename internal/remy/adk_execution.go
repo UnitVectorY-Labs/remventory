@@ -204,19 +204,19 @@ func componentReferences(components []Component) []string {
 					if id, ok := child.(string); ok && uuid.Validate(id) == nil {
 						set[id] = true
 					}
-					if key == "item_ids" {
-						if list, ok := child.([]string); ok {
-							for _, id := range list {
-								if uuid.Validate(id) == nil {
-									set[id] = true
-								}
+				}
+				if key == "item_ids" {
+					if list, ok := child.([]string); ok {
+						for _, id := range list {
+							if uuid.Validate(id) == nil {
+								set[id] = true
 							}
 						}
-						if list, ok := child.([]any); ok {
-							for _, value := range list {
-								if id, ok := value.(string); ok && uuid.Validate(id) == nil {
-									set[id] = true
-								}
+					}
+					if list, ok := child.([]any); ok {
+						for _, value := range list {
+							if id, ok := value.(string); ok && uuid.Validate(id) == nil {
+								set[id] = true
 							}
 						}
 					}

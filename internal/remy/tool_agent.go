@@ -140,7 +140,7 @@ func (s *Service) executeAgentTool(ctx context.Context, name string, args map[st
 		if string(rawAttrs) == "null" {
 			rawAttrs = []byte(`{}`)
 		}
-		quantity := intArg(args, "quantity", 1)
+		quantity := intArg(args, "quantity", 0)
 		delta := intArg(args, "quantity_delta", 0)
 		if op == "" {
 			return nil, nil, errors.New("operation is required")
@@ -378,20 +378,6 @@ func intArg(args map[string]any, key string, fallback int) int {
 	}
 	return fallback
 }
-func toFloat(v any) (float64, bool) {
-	switch n := v.(type) {
-	case float64:
-		return n, true
-	case int:
-		return float64(n), true
-	case string:
-		var f float64
-		_, err := fmt.Sscan(n, &f)
-		return f, err == nil
-	}
-	return 0, false
-}
-
 func (s *Service) hydrateFocus(ctx context.Context, ids []string) ([]any, error) {
 	out := []any{}
 	for _, id := range ids {
