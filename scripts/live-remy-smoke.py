@@ -4,11 +4,10 @@
 Run once for each configured main-model alias against a populated disposable database:
   REMVENTORY_BASE_URL=http://localhost:8080 python3 scripts/live-remy-smoke.py
 """
+import http.client
 import json
 import os
-import urllib.error
 import urllib.parse
-import urllib.request
 import uuid
 
 raw_base = os.environ.get("REMVENTORY_BASE_URL", "http://localhost:8080")
@@ -22,9 +21,7 @@ if (
     or parsed_base.fragment
 ):
     raise SystemExit("REMVENTORY_BASE_URL must be an HTTP(S) origin or path without credentials, query, or fragment")
-base = urllib.parse.urlunsplit(
-    (parsed_base.scheme, parsed_base.netloc, parsed_base.path.rstrip("/"), "", "")
-)
+base_path = parsed_base.path.rstrip("/")
 token = os.environ.get("REMVENTORY_ACCESS_TOKEN", "")
 if os.environ.get("REMVENTORY_SMOKE_DISPOSABLE") != "YES":
     raise SystemExit("Refusing to run without REMVENTORY_SMOKE_DISPOSABLE=YES; this scenario creates a pending proposal")
@@ -35,19 +32,34 @@ focus_ids = []
 last_summary = ""
 last_components = []
 
+
+def api_json(path, body=None, timeout=20):
+    connection_type = (
+        http.client.HTTPSConnection
+        if parsed_base.scheme == "https"
+        else http.client.HTTPConnection
+    )
+    connection = connection_type(parsed_base.hostname, parsed_base.port, timeout=timeout)
+    headers = {"Accept": "application/json"}
+    if body is not None:
+        headers["Content-Type"] = "application/json"
+    if token:
+        headers["Authorization"] = "Bearer " + token
+    try:
+        connection.request("POST" if body is not None else "GET", base_path + path, body=body, headers=headers)
+        response = connection.getresponse()
+        payload = response.read()
+    finally:
+        connection.close()
+    if response.status < 200 or response.status >= 300:
+        raise SystemExit(f"Remy request failed ({response.status}): {payload.decode(errors='replace')}")
+    return json.loads(payload)
+
+
 def request(message):
     global last_summary, last_components
     body = json.dumps({"message": message, "session_id": session_id, "focus_ids": focus_ids}).encode()
-    headers = {"Content-Type": "application/json"}
-    if token:
-        headers["Authorization"] = "Bearer " + token
-    req = urllib.request.Request(base + "/api/remy/request", data=body, headers=headers)
-    try:
-        # The URL is derived from the validated HTTP(S) base above.
-        with urllib.request.urlopen(req, timeout=180) as response:  # nosemgrep
-            result = json.load(response)
-    except urllib.error.HTTPError as exc:
-        raise SystemExit(f"Remy request failed ({exc.code}): {exc.read().decode(errors='replace')}")
+    result = api_json("/api/remy/request", body=body, timeout=180)
     if result.get("state") != "completed" or not result.get("summary", "").strip():
         raise SystemExit(f"Remy returned no completed natural-language answer: {result!r}")
     if result.get("session_id") != session_id:
@@ -119,12 +131,7 @@ if "comparison" not in types:
     raise SystemExit("Expected Remy to compare canonical items retained from prior turns")
 
 def get_json(path):
-    headers={}
-    if token: headers["Authorization"]="Bearer "+token
-    request = urllib.request.Request(base + path, headers=headers)
-    # The URL is derived from the validated HTTP(S) base above.
-    with urllib.request.urlopen(request, timeout=20) as response:  # nosemgrep
-        return json.load(response)
+    return api_json(path)
 
 # Proposal creation/revision are limited to a database explicitly declared disposable above.
 types = request("Create a pending proposal to increase Archive Game 250 by exactly one unit. Do not approve it; show me the proposal.")
