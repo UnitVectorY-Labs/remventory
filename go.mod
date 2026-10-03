@@ -12,7 +12,7 @@ require (
 	github.com/mark3labs/mcp-go v1.1.1
 	golang.org/x/image v0.46.0
 	google.golang.org/adk v1.7.0
-	google.golang.org/genai v1.57.0
+	google.golang.org/genai v1.71.0
 )
 
 require (
