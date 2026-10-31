@@ -10,7 +10,7 @@ require (
 	github.com/google/uuid v1.6.0
 	github.com/jackc/pgx/v5 v5.11.0
 	github.com/mark3labs/mcp-go v1.1.1
-	golang.org/x/image v0.46.0
+	golang.org/x/image v0.47.0
 	google.golang.org/adk v1.8.0
 	google.golang.org/genai v1.72.0
 )
