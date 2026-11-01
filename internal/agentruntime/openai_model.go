@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"iter"
 	"net/http"
@@ -127,6 +128,11 @@ func (m *OpenAIModel) GenerateContent(ctx context.Context, req *model.LLMRequest
 		}
 		defer resp.Body.Close()
 		if resp.StatusCode < 200 || resp.StatusCode > 299 {
+			detail, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<10))
+			if trimmed := strings.TrimSpace(string(detail)); trimmed != "" {
+				yield(nil, fmt.Errorf("model endpoint returned %s: %s", resp.Status, trimmed))
+				return
+			}
 			yield(nil, errors.New("model endpoint returned "+resp.Status))
 			return
 		}

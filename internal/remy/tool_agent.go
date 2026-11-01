@@ -20,6 +20,10 @@ type evidence struct {
 func (s *Service) agentToolDefinitions() []map[string]any {
 	str := func(desc string) map[string]any { return map[string]any{"type": "string", "description": desc} }
 	obj := func(props map[string]any, required ...string) map[string]any {
+		if required == nil {
+			// A nil slice marshals as null; strict OpenAI-compatible endpoints require an array here.
+			required = []string{}
+		}
 		return map[string]any{"type": "object", "properties": props, "required": required, "additionalProperties": false}
 	}
 	fn := func(name, description string, parameters map[string]any) map[string]any {
