@@ -259,6 +259,13 @@ func TestLibraryApprovalAndPhotos(t *testing.T) {
 	if independent["category_id"] != "" || independent["attributes"].(map[string]any)["platform"] != "Wii" || len(independent["tags"].([]any)) != 2 {
 		t.Fatal("template defaults were not copied independently")
 	}
+	// Editing a template can explicitly clear all starting fields and defaults.
+	editedTemplate := call("POST", "/api/proposals/category", map[string]any{"operation": "update", "category_id": templateID, "name": "Empty starting point", "attributes": []any{}, "default_tags": []string{}, "default_values": map[string]any{}})
+	call("POST", "/api/proposals/"+editedTemplate["id"].(string)+"/decision", map[string]bool{"approve": true})
+	emptyTemplate := call("GET", "/api/categories/"+templateID, nil)
+	if len(emptyTemplate["attributes"].([]any)) != 0 || len(emptyTemplate["default_values"].(map[string]any)) != 0 || len(emptyTemplate["default_tags"].([]any)) != 0 {
+		t.Fatal("template edit did not clear starting fields, defaults, and tags")
+	}
 	removal := call("POST", "/api/proposals/category", map[string]any{"operation": "delete", "category_id": templateID})
 	call("POST", "/api/proposals/"+removal["id"].(string)+"/decision", map[string]bool{"approve": true})
 	retained := call("GET", "/api/items/"+flexibleID, nil)

@@ -379,7 +379,7 @@ func (s *Store) CreateCategoryProposal(ctx context.Context, payload CategoryProp
 		if len(payload.DefaultValues) == 0 {
 			payload.DefaultValues = category.DefaultValues
 		}
-		if len(payload.Attributes) == 0 {
+		if payload.Attributes == nil {
 			payload.Attributes = make([]AttributeDraft, 0, len(category.Attributes))
 			for _, attribute := range category.Attributes {
 				payload.Attributes = append(payload.Attributes, AttributeDraft{

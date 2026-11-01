@@ -4,28 +4,36 @@ let libraryFilters = { q: "", category_id: "", tag: "", location: "" };
 let libraryPage = 0;
 let libraryGeneration = 0;
 const catalogModal = document.querySelector("#catalog-modal");
-const glyphs = ["▤", "♫", "▣", "♟", "◈", "▧"];
-const typeGlyph = (name = "") => /book/i.test(name) ? "▤" : /music|vinyl|cd/i.test(name) ? "♫" : /movie|film|dvd|blu/i.test(name) ? "▣" : /game/i.test(name) ? "♟" : "◈";
 const el = (tag, className, text) => { const node = document.createElement(tag); if (className) node.className = className; if (text !== undefined) node.textContent = text; return node; };
-const button = (text, action, className = "secondary") => { const node = el("button", className, text); node.type = "button"; node.onclick = action; return node; };
+const icon = name => { const node = el("img", "icon"); node.src = `/static/icons/${name}.svg`; node.alt = ""; return node; };
+const button = (text, action, className = "secondary", iconName = "") => { const node = el("button", className, text); node.type = "button"; node.onclick = action; if (iconName) node.prepend(icon(iconName)); return node; };
+let workspaceMode = "collection";
+function setWorkspace(mode) {
+  workspaceMode = mode;
+  document.querySelector(".library-heading h1").textContent = mode === "admin" ? "Administration" : mode === "review" ? "Review changes" : "My collection";
+  document.querySelector("#add-item").hidden = mode === "admin";
+  document.querySelector("#collection-navigation").hidden = mode === "admin";
+  for (const [id, value] of [["library-home", "collection"], ["admin-home", "admin"], ["review-changes", "review"]]) {
+    const nav = document.querySelector(`#${id}`); nav.classList.toggle("selected", value === mode);
+    if (value === mode) nav.setAttribute("aria-current", "page"); else nav.removeAttribute("aria-current");
+  }
+}
+document.querySelector("#admin-home").onclick = () => showAdmin();
 document.querySelector("#library-home").onclick = () => { libraryFilters = { q: "", category_id: "", tag: "", location: "" }; showLibrary(); };
 document.querySelector("#add-item").onclick = () => openCatalog();
-document.querySelector("#add-type").onclick = () => openTypeEditor();
 document.querySelector("#review-changes").onclick = async () => {
-  libraryGeneration++;
+  if (activeController) return;
+  setWorkspace("review"); libraryGeneration++;
   try { await refreshPendingProposals(false); renderResponse({ summary: pendingProposals.length ? "Pending changes." : "No pending changes.", components: [] }); }
   catch (error) { renderError(error); }
 };
 document.querySelector("#toggle-remy").onclick = () => input.focus();
-document.querySelector("#manage-fields").onclick = () => openVocabularyEditor();
 
 async function loadLibraryMeta() {
   const [vocabulary, facets, proposals] = await Promise.all([api("/api/vocabulary"), api("/api/library"), api("/api/proposals?limit=100")]);
   graphVocabulary = vocabulary;
   pendingProposals = proposals.proposals || [];
   libraryTypes = graphVocabulary.templates || [];
-  const list = document.querySelector("#type-filters"); list.replaceChildren();
-  for (const template of libraryTypes) list.append(button(template.name, () => openCatalog(null, template), "nav-button"));
   const tags = document.querySelector("#tag-filters"); tags.replaceChildren();
   for (const tag of facets.tags || []) tags.append(button(`${tag.name} · ${tag.count}`, () => { const selected = libraryFilters.tag.split(",").filter(Boolean); libraryFilters.tag = (selected.includes(tag.name) ? selected.filter(value => value !== tag.name) : [...selected, tag.name]).join(","); showLibrary(); }, `tag ${libraryFilters.tag.split(",").includes(tag.name) ? "selected" : ""}`));
   document.querySelector("#review-count").textContent = pendingProposals.length || "";
@@ -34,6 +42,7 @@ async function loadLibraryMeta() {
 
 async function showLibrary(page = 0) {
   if (activeController) return;
+  setWorkspace("collection");
   const generation = ++libraryGeneration; ++requestGeneration;
   currentResponse = null; libraryPage = page;
   stage.innerHTML = '<p class="muted" role="status">Loading collection…</p>';
@@ -58,8 +67,8 @@ async function showLibrary(page = 0) {
     stage.append(caption);
     const items = result.items || [];
     if (!items.length) {
-      const empty = el("div", "library-empty"); empty.innerHTML = `<span class="empty-symbol">${active.length ? "⌕" : "▤"}</span><h2>${active.length ? "No matching items" : "No items yet"}</h2>`;
-      empty.append(button(active.length ? "Clear filters" : "＋ Catalog your first item", () => active.length ? document.querySelector("#library-home").click() : openCatalog(), "")); stage.append(empty);
+      const empty = el("div", "library-empty"); empty.innerHTML = `<span class="empty-symbol"><img class="icon" src="/static/icons/box.svg" alt=""></span><h2>${active.length ? "No matching items" : "No items yet"}</h2>`;
+      empty.append(button(active.length ? "Clear filters" : "Catalog your first item", () => active.length ? document.querySelector("#library-home").click() : openCatalog(), "")); stage.append(empty);
     } else {
       const grid = el("div", "inventory-grid");
       for (const item of items) {
@@ -67,7 +76,7 @@ async function showLibrary(page = 0) {
         const card = button("", () => { ++libraryGeneration; openItemDetail(item, type); }, "inventory-card");
         const picture = el("div", "inventory-picture");
         if (item.images?.length) { const img = el("img"); img.src = (item.images.find(image => image.is_primary) || item.images[0]).thumbnail_url; img.alt = item.title; img.loading = "lazy"; picture.append(img); }
-        else { picture.classList.add("picture-placeholder"); picture.append(el("span", "", typeGlyph(type.name))); }
+        else { picture.classList.add("picture-placeholder"); picture.append(icon("box")); }
         const info = el("div", "inventory-info"); info.append(el("h2", "", item.title));
         const tags = el("div", "card-tags"); for (const tag of (item.tags || []).slice(0, 3)) tags.append(el("span", "tag", tag)); info.append(tags);
         card.append(picture, info); grid.append(card);
@@ -82,22 +91,22 @@ function labeled(label, control) { const wrapper = el("label", "form-field"); wr
 function field(value = "", type = "text") { const node = el("input"); node.type = type; node.value = value; return node; }
 function dialogHeader(title) {
   const header = el("div", "card-heading"); const heading = el("h2", "", title); heading.id = "catalog-title";
-  header.append(heading, button("×", () => catalogModal.close(), "icon-button secondary")); header.lastChild.setAttribute("aria-label", "Close"); return header;
+  header.append(heading, button("", () => catalogModal.close(), "icon-button secondary", "x")); header.lastChild.setAttribute("aria-label", "Close"); return header;
 }
 
 
 function registeredFieldEditor(definition, value, onRemove) {
   const row = el("section", "registered-field"); row.dataset.fieldKey = definition.key;
-  const heading = el("div", "field-heading"); heading.append(el("strong", "", definition.label), el("small", "muted", definition.data_type), button("×", onRemove, "plain-button")); heading.lastChild.setAttribute("aria-label", `Remove ${definition.label}`); row.append(heading);
+  const heading = el("div", "field-heading"); heading.append(el("strong", "", definition.label), el("small", "muted", definition.data_type), button("", onRemove, "plain-button", "x")); heading.lastChild.setAttribute("aria-label", `Remove ${definition.label}`); row.append(heading);
   let read;
   if (definition.data_type === "links") {
     const links = el("div", "link-list");
     const addLink = (link = {}) => {
       const entry = el("div", "link-entry"); const name = field(link.name || ""); name.placeholder = "Name, e.g. Wikipedia"; name.setAttribute("aria-label", "Link name");
-      const url = field(link.url || "", "url"); url.placeholder = "https://…"; url.setAttribute("aria-label", "Link URL"); entry.append(name, url, button("×", () => entry.remove(), "plain-button")); links.append(entry);
+      const url = field(link.url || "", "url"); url.placeholder = "https://…"; url.setAttribute("aria-label", "Link URL"); entry.append(name, url, button("Remove link", () => entry.remove(), "plain-button", "x")); links.append(entry);
     };
     for (const link of Array.isArray(value) ? value : []) addLink(link);
-    row.append(links, button("＋ Add a link", () => addLink()));
+    row.append(links, button("Add a link", () => addLink(), "secondary", "plus"));
     read = () => [...links.children].map(entry => { const [name, url] = entry.querySelectorAll("input"); return { name: name.value.trim(), url: url.value.trim() }; }).filter(link => link.name || link.url);
   } else {
     let control;
@@ -167,10 +176,10 @@ async function openCatalog(existing = null, startingTemplate = null) {
   function renderPhotos() {
     gallery.replaceChildren();
     const all = [...existingPhotos.map(image => ({ key: image.id, url: image.thumbnail_url || `/api/images/${image.id}/thumbnail`, name: "Saved photo" })), ...additions];
-    if (!all.length) { const empty = el("div", "draft-preview"); empty.innerHTML = "<span>▧</span><h3>Pictures</h3>"; gallery.append(empty); }
+    if (!all.length) { const empty = el("div", "draft-preview"); empty.append(icon("photo"), el("h3", "", "Pictures")); gallery.append(empty); }
     for (const photo of all) {
       const tile = el("div", "draft-photo"); const img = el("img"); img.src = photo.url; img.alt = photo.name;
-      tile.append(img, button(primary === photo.key ? "★ Primary picture" : "Use as primary", () => { primary = photo.key; renderPhotos(); }, primary === photo.key ? "primary-choice selected" : "primary-choice secondary"));
+      tile.append(img, button(primary === photo.key ? "Primary picture" : "Use as primary", () => { primary = photo.key; renderPhotos(); }, primary === photo.key ? "primary-choice selected" : "primary-choice secondary"));
       if (photo.file) tile.append(button("Remove", () => { const index = additions.indexOf(photo); additions.splice(index, 1); URL.revokeObjectURL(photo.url); if (primary === photo.key) primary = existingPhotos[0]?.id || additions[0]?.key || null; renderPhotos(); }));
       gallery.append(tile);
     }
@@ -183,10 +192,12 @@ async function openCatalog(existing = null, startingTemplate = null) {
       const photo = { key: makeUUID(), file, url: URL.createObjectURL(file), name: file.name, uploadedID: null }; additions.push(photo); if (!primary) primary = photo.key;
     }
     renderPhotos();
+    if (!existing && autoSuggest.checked && additions.length && !identifying) identify.click();
   };
   files.onchange = () => { chooseFiles(files.files); files.value = ""; }; camera.onchange = () => chooseFiles(camera.files);
+  const autoSuggest = field("", "checkbox"); autoSuggest.checked = visionConfigured; autoSuggest.disabled = !visionConfigured;
   const analysisNote = el("p", "analysis-note");
-  const identify = button("✦ Let Remy read a picture", async () => {
+  const identify = button("Suggest details from picture", async () => {
     if (identifying) return;
     const target = additions.find(photo => photo.key === primary) || additions[0];
     if (!target) { status.textContent = "Choose a new picture for Remy to read."; return; }
@@ -195,14 +206,15 @@ async function openCatalog(existing = null, startingTemplate = null) {
     const body = new FormData(); body.append("image", target.file);
     try {
       const suggestion = await api("/api/photos/identify", { method: "POST", body, signal: identifying.signal });
-      const next = { ...editor.read(), ...(suggestion.attributes || {}) }; if (suggestion.title && !next.title) next.title = suggestion.title;
+      const next = { ...(suggestion.attributes || {}), ...editor.read() }; if (suggestion.title && !next.title) next.title = suggestion.title;
       replaceValues(next); tags.value = [...new Set([...parseTags(), ...(suggestion.tags || [])])].join(", "); suggestTagFields();
-      analysisNote.textContent = `Remy’s unverified suggestions: ${suggestion.notes || "Please check the details before saving."}`; status.textContent = "Review and edit Remy’s suggestions.";
+      analysisNote.replaceChildren(el("span", "", `Remy’s unverified suggestions: ${readableAnswer(suggestion.notes || "Please check the details before saving.").message}`));
+      const extra = readableAnswer(suggestion.notes || "").details; if (extra.length) analysisNote.append(technicalDetails(extra, "Identification details")); status.textContent = "Review and edit Remy’s suggestions.";
     } catch (error) { status.textContent = error.name === "AbortError" ? "Stopped reading. Your draft is still here." : error.message; }
     finally { identifying = null; identify.disabled = false; review.disabled = false; stop.hidden = true; }
   });
   const stop = button("Stop reading", () => identifying?.abort()); stop.hidden = true;
-  photos.append(gallery, labeled("Choose pictures", files), camera, button("Take a picture", () => camera.click()), identify, stop, el("p", "muted", "JPEG, PNG, GIF · 12 MB per picture"), analysisNote); renderPhotos();
+  photos.append(gallery, labeled("Choose pictures", files), camera, button("Take a picture", () => camera.click(), "secondary", "camera"), identify, stop, el("p", "muted", "JPEG, PNG, GIF · 12 MB per picture"), ...(!existing ? [labeled("Let Remy suggest details when I add a photo", autoSuggest)] : []), analysisNote); renderPhotos();
   layout.append(photos, details); const summary = el("div", "catalog-review"); summary.hidden = true;
   const review = el("button", "", "Review changes →"); review.type = "submit";
   const back = button("Keep editing", () => { reviewing = false; summary.hidden = true; layout.hidden = false; review.textContent = "Review changes →"; back.hidden = true; }); back.hidden = true;
@@ -252,19 +264,30 @@ function appendAttributeDetail(list, key, value) {
 
 function reviewDefinition(path, payload, title, restore) {
   catalogModal.replaceChildren(dialogHeader(title)); const list = el("dl", "details");
-  for (const [key, value] of Object.entries(payload)) if (key !== "operation") appendDetail(list, prettyKey(key), typeof value === "object" ? JSON.stringify(value, null, 2) : value);
+  for (const [key, value] of Object.entries(payload)) {
+    if (["operation", "category_id", "item_id", "attributes", "default_values", "config"].includes(key)) continue;
+    appendDetail(list, prettyKey(key), Array.isArray(value) ? value.map(value => graphVocabulary.fields.find(field => field.key === value)?.label || value).join(", ") : value);
+  }
+  if (payload.operation === "delete") catalogModal.append(el("p", "callout danger-callout", path.endsWith("category") ? "Delete this template? Existing items will keep their fields and tags." : "Delete this item permanently? This cannot be undone."));
+  if (Array.isArray(payload.attributes)) {
+    appendDetail(list, "Starting fields", payload.attributes.map(definition => definition.label).join(", ") || "None");
+  }
+  const values = el("dl", "details");
+  for (const [key, value] of Object.entries(payload.default_values || {})) appendAttributeDetail(values, key, value);
+  if (payload.config?.options) appendDetail(list, "Choices", payload.config.options.join(", "));
+  const technical = technicalDetails(payload);
   const status = el("p", "form-status"); status.setAttribute("role", "status"); let busy = false, proposalID = null;
-  const approve = button("Approve & save", async () => {
+  const approve = button(payload.operation === "delete" ? "Approve deletion" : "Approve & save", async () => {
     if (busy) return; busy = true; approve.disabled = true; edit.disabled = true; catalogModal.querySelector(".card-heading button").disabled = true;
-    try { if (!proposalID) { const proposal = await api(path, { method: "POST", body: JSON.stringify(payload) }); proposalID = proposal.id; } await confirmStoredProposal(proposalID); busy = false; catalogModal.close(); await loadLibraryMeta(); setDialog({ icon: "celebrating", message: "Saved." }); }
+    try { if (!proposalID) { const proposal = await api(path, { method: "POST", body: JSON.stringify(payload) }); proposalID = proposal.id; } await confirmStoredProposal(proposalID); busy = false; catalogModal.close(); await loadLibraryMeta(); if (workspaceMode === "admin") await showAdmin(); else await showLibrary(); setDialog({ icon: "celebrating", message: "Saved." }); }
     catch (error) { status.textContent = error.message; }
     finally { busy = false; approve.disabled = false; edit.disabled = !!proposalID; catalogModal.querySelector(".card-heading button").disabled = false; }
   }, "");
-  const edit = button("Keep editing", restore); const actions = el("div", "actions"); actions.append(edit, approve); catalogModal.append(list, status, actions);
+  const edit = button(payload.operation === "delete" ? "Cancel" : "Keep editing", restore); const actions = el("div", "actions"); actions.append(edit, approve); catalogModal.append(list, values, status, actions, technical);
   catalogModal.oncancel = event => { if (busy) event.preventDefault(); }; catalogModal.onclose = null;
 }
 
-async function openVocabularyEditor() {
+async function openVocabularyEditor(section = "fields") {
   try { await loadLibraryMeta(); } catch (error) { renderError(error); return; }
   const content = el("div", "vocabulary-editor");
   const known = el("div", "vocabulary-list"); for (const field of graphVocabulary.fields) known.append(el("span", "tag", `${field.label} · ${field.data_type}`)); content.append(known);
@@ -273,25 +296,29 @@ async function openVocabularyEditor() {
   const kind = el("select"); for (const type of ["text", "number", "boolean", "date", "links", "enum"]) kind.append(new Option(type, type));
   const options = field(); options.placeholder = "For enum fields: separate choices with commas";
   const submit = el("button", "", "Review field definition"); submit.type = "submit";
-  form.append(labeled("Label", label), labeled("Stable field key", key), labeled("Value type", kind), labeled("Choices · enum only", options), submit);
+  const advanced = el("details", "technical-details"); advanced.append(el("summary", "", "Advanced: field key"), labeled("Stable field key", key));
+  const choices = labeled("Choices · separate with commas", options); choices.hidden = true;
+  kind.onchange = () => { choices.hidden = kind.value !== "enum"; options.required = kind.value === "enum"; };
+  form.append(labeled("Label", label), labeled("Value type", kind), choices, advanced, submit);
   form.onsubmit = event => { event.preventDefault(); reviewDefinition("/api/proposals/graph", { operation: "define_field", key: key.value, label: label.value, data_type: kind.value, config: kind.value === "enum" ? { options: options.value.split(",").map(value => value.trim()).filter(Boolean) } : {} }, "Review shared field", restore); };
   const association = el("form", "type-form"); association.append(el("h3", "", "Suggest fields for a tag")); const tag = field(); tag.required = true; tag.placeholder = "Wii, Games, Books…";
   const checks = el("div", "field-checks");
   const showChecks = () => { checks.replaceChildren(); const selected = Object.entries(graphVocabulary.tag_fields).find(([name]) => name.toLowerCase() === tag.value.trim().toLowerCase())?.[1] || []; for (const definition of graphVocabulary.fields) { const check = field("", "checkbox"); check.value = definition.key; check.checked = selected.includes(definition.key); checks.append(labeled(definition.label, check)); } };
   tag.onchange = showChecks; showChecks(); const save = el("button", "", "Review tag suggestions"); save.type = "submit"; association.append(labeled("Tag", tag), checks, save);
   association.onsubmit = event => { event.preventDefault(); reviewDefinition("/api/proposals/graph", { operation: "suggest_fields", tag: tag.value.trim(), field_keys: [...checks.querySelectorAll("input:checked")].map(input => input.value) }, "Review suggested fields", restore); };
-  content.append(form, association);
-  function restore() { catalogModal.replaceChildren(dialogHeader("Fields & tag suggestions"), content); catalogModal.oncancel = null; }
+  content.append(section === "tags" ? association : form);
+  function restore() { catalogModal.replaceChildren(dialogHeader(section === "tags" ? "Manage tag defaults" : "New common field"), content); catalogModal.oncancel = null; }
   restore(); catalogModal.onclose = null; if (!catalogModal.open) catalogModal.showModal();
 }
 
-async function openTypeEditor() {
+async function openTypeEditor(existing = null) {
   try { await loadLibraryMeta(); } catch (error) { renderError(error); return; }
-  const content = el("form", "type-form"); const name = field(); name.required = true; const tags = field(); tags.placeholder = "Games, Wii";
-  const editor = fieldSetEditor({}, []); content.append(labeled("Template name", name), labeled("Default tags", tags), editor.root);
+  const content = el("form", "type-form"); const name = field(existing?.name || ""); name.required = true; const tags = field((existing?.default_tags || []).join(", ")); tags.placeholder = "Games, Wii";
+  const description = field(existing?.description || "");
+  const editor = fieldSetEditor(existing?.default_values || {}, (existing?.attributes || []).map(field => field.key)); content.append(labeled("Template name", name), labeled("Description", description), labeled("Default tags", tags), el("h3", "", "Starting fields and defaults"), editor.root);
   const submit = el("button", "", "Review template"); submit.type = "submit"; content.append(submit);
-  content.onsubmit = event => { event.preventDefault(); const keys = editor.keys(); reviewDefinition("/api/proposals/category", { operation: "create", name: name.value.trim(), default_tags: tags.value.split(",").map(value => value.trim()).filter(Boolean), default_values: editor.read(), attributes: keys.map(key => ({ ...graphVocabulary.fields.find(field => field.key === key), required: false })) }, "Review creation template", restore); };
-  function restore() { catalogModal.replaceChildren(dialogHeader("Create a starting template"), content); catalogModal.oncancel = null; }
+  content.onsubmit = event => { event.preventDefault(); const keys = editor.keys(); reviewDefinition("/api/proposals/category", { operation: existing ? "update" : "create", ...(existing ? {category_id: existing.id} : {}), name: name.value.trim(), description: description.value.trim(), default_tags: tags.value.split(",").map(value => value.trim()).filter(Boolean), default_values: editor.read(), attributes: keys.map(key => ({ ...graphVocabulary.fields.find(field => field.key === key), required: false })) }, "Review creation template", restore); };
+  function restore() { catalogModal.replaceChildren(dialogHeader(existing ? "Edit template" : "Create a starting template"), content); catalogModal.oncancel = null; }
   restore(); catalogModal.onclose = null; if (!catalogModal.open) catalogModal.showModal();
 }
 if (!new URLSearchParams(location.search).get("message")) showLibrary();
@@ -307,5 +334,45 @@ function vocabularyCard(vocabulary) {
   const card = el("article", "card"); card.append(el("h2", "", "Shared fields & tag suggestions"));
   const fields = el("div", "vocabulary-list"); for (const definition of vocabulary.fields || []) fields.append(el("span", "tag", `${definition.label} · ${definition.data_type}`)); card.append(fields);
   for (const [tag, keys] of Object.entries(vocabulary.tag_fields || {})) card.append(el("p", "muted", `${tag}: ${keys.join(", ")}`));
-  card.append(button("Manage vocabulary", () => openVocabularyEditor())); return card;
+  card.append(button("Open administration", () => showAdmin())); return card;
+}
+
+async function showAdmin() {
+  if (activeController) return;
+  const generation = ++libraryGeneration; ++requestGeneration;
+  currentResponse = null; setWorkspace("admin");
+  stage.replaceChildren(el("p", "muted", "Loading administration…"));
+  try {
+    await loadLibraryMeta();
+    if (generation !== libraryGeneration) return;
+    stage.replaceChildren(el("p", "muted", "Define the common fields, starting templates, and tag defaults used across your collection. Changes are reviewed before saving."));
+    const fields = el("article", "card"); const fieldHeading = el("div", "card-heading");
+    fieldHeading.append(el("h2", "", "Common fields"), button("New common field", () => openVocabularyEditor("fields"), "secondary", "plus"));
+    fields.append(fieldHeading, el("p", "muted", "Reusable details such as Year, Condition, or Purchase price. Every item can use any approved field."));
+    const definitions = el("div", "admin-list");
+    for (const definition of graphVocabulary.fields) { const row = el("div", "admin-row"); row.append(el("strong", "", definition.label), el("span", "muted", prettyKey(definition.data_type))); definitions.append(row); }
+    fields.append(definitions);
+    const templates = el("article", "card"); const heading = el("div", "card-heading");
+    heading.append(el("h2", "", "Templates"), button("New template", () => openTypeEditor(), "secondary", "plus"));
+    templates.append(heading, el("p", "muted", "Starting fields, values, and tags for new items. Editing a template affects future drafts only."));
+    if (!libraryTypes.length) templates.append(el("p", "muted", "No templates yet. Create one for belongings you add often."));
+    for (const template of libraryTypes) {
+      const row = el("div", "admin-row"); const info = el("div");
+      info.append(el("strong", "", template.name), el("p", "muted", `${(template.attributes || []).length} starting fields · ${(template.default_tags || []).join(", ") || "No default tags"}`));
+      const actions = el("div", "actions"); actions.append(button("Edit", () => openTypeEditor(template), "secondary", "pencil"), button("Delete", () => reviewDeletion("template", template), "secondary danger-text", "trash")); row.append(info, actions); templates.append(row);
+    }
+    const tags = el("article", "card"); const tagHeading = el("div", "card-heading");
+    tagHeading.append(el("h2", "", "Tag defaults"), button("Manage tag defaults", () => openVocabularyEditor("tags"), "secondary", "settings"));
+    tags.append(tagHeading, el("p", "muted", "Choose which fields appear when a tag is added to a draft. These are suggestions; values remain optional."));
+    for (const [tag, keys] of Object.entries(graphVocabulary.tag_fields || {})) { const row = el("div", "admin-row"); row.append(el("strong", "", tag), el("span", "muted", keys.map(key => graphVocabulary.fields.find(field => field.key === key)?.label || prettyKey(key)).join(", "))); tags.append(row); }
+    stage.append(fields, templates, tags);
+  } catch (error) { if (generation === libraryGeneration) renderError(error); }
+}
+
+function reviewDeletion(kind, record) {
+  const isTemplate = kind === "template";
+  reviewDefinition(isTemplate ? "/api/proposals/category" : "/api/proposals/item", {
+    operation: "delete", ...(isTemplate ? { category_id: record.id, name: record.name } : { item_id: record.id, title: record.title || "Untitled item" }),
+  }, isTemplate ? "Review template deletion" : "Review item deletion", () => catalogModal.close());
+  if (!catalogModal.open) catalogModal.showModal();
 }

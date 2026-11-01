@@ -10,7 +10,7 @@ w.HTMLDialogElement.prototype.showModal = function(){this.open=true};
 w.HTMLDialogElement.prototype.close = function(){this.open=false;this.onclose?.()};
 w.URL.createObjectURL = file => 'blob:'+file.name; w.URL.revokeObjectURL = ()=>{};
 const vocabulary = {fields:[{key:'title',label:'Title',data_type:'text'},{key:'year',label:'Year',data_type:'number'},{key:'links',label:'Links',data_type:'links'},{key:'description',label:'Description',data_type:'text'}],tag_fields:{Games:['title','year','links']},templates:[{id:'template-1',name:'Wii games',default_tags:['Games','Wii'],default_values:{year:2006},attributes:[{key:'title'},{key:'year'},{key:'links'}]}]};
-let sequence=0,photoSequence=0;
+let sequence=0,photoSequence=0,identifications=0;
 const proposals = new Map(); const mutations=[];
 w.fetch=async(path,options={})=>{
  let data={};
@@ -19,7 +19,8 @@ w.fetch=async(path,options={})=>{
  else if(path==='/api/library')data={total:0,tags:[],types:{},locations:[]};
  else if(path.startsWith('/api/items?'))data={total:0,items:[]};
  else if(path.startsWith('/api/proposals?'))data={proposals:[]};
- else if(path==='/api/proposals/item') {const payload=JSON.parse(options.body);mutations.push(payload);const id='proposal-'+(++sequence);data={id,status:'pending',proposed_payload:payload};proposals.set(id,data)}
+ else if(path==='/api/photos/identify') {identifications++; data={attributes:{year:2020},tags:[],notes:'Please review.'};}
+ else if(['/api/proposals/item','/api/proposals/category','/api/proposals/graph'].includes(path)) {const payload=JSON.parse(options.body);mutations.push(payload);const id='proposal-'+(++sequence);data={id,status:'pending',proposed_payload:payload};proposals.set(id,data)}
  else if(path.startsWith('/api/proposals/')) {const parts=path.split('/');data=proposals.get(parts[3]);if(parts[4]==='decision'){data.status='approved';data.proposed_payload.item_id='saved-item'}}
  else if(path==='/api/items/saved-item/images') data={id:'photo-'+(++photoSequence)};
  else throw Error('Unexpected path '+path);
@@ -35,9 +36,11 @@ for(const file of ['app.js','library.js'])new vm.Script(readFileSync(base+file,'
  assert.equal(modal.querySelector('[aria-label="Year"]').value,'2006');
  assert.equal(modal.querySelector('input[placeholder="Consoles, Wii, Nintendo"]').value,'Games, Wii');
  modal.querySelector('[aria-label="Remove Title"]').click();
- const linkButton=[...modal.querySelectorAll('button')].find(button=>button.textContent==='＋ Add a link');linkButton.click();
+ const linkButton=[...modal.querySelectorAll('button')].find(button=>button.textContent==='Add a link');linkButton.click();
  modal.querySelector('[aria-label="Link name"]').value='Wikipedia';modal.querySelector('[aria-label="Link URL"]').value='https://en.wikipedia.org/wiki/Wii';
- const fileInput=modal.querySelector('input[multiple]');Object.defineProperty(fileInput,'files',{value:[new w.File(['a'],'front.png',{type:'image/png'}),new w.File(['b'],'back.png',{type:'image/png'})]});fileInput.onchange();
+ const fileInput=modal.querySelector('input[multiple]');Object.defineProperty(fileInput,'files',{value:[new w.File(['a'],'front.png',{type:'image/png'}),new w.File(['b'],'back.png',{type:'image/png'})]});fileInput.onchange();await new Promise(resolve=>setTimeout(resolve,0));
+ assert.equal(identifications,1,'new photos automatically request editable suggestions');
+ assert.equal(modal.querySelector('[aria-label="Year"]').value,'2006','suggestions preserve entered values');
  const primaryButtons=[...modal.querySelectorAll('.primary-choice')];assert.equal(primaryButtons.length,2);primaryButtons[1].click();
  const form=modal.querySelector('form');await form.onsubmit({preventDefault(){}});assert(modal.textContent.includes('back.png (primary)'));
  await form.onsubmit({preventDefault(){}});
@@ -45,6 +48,43 @@ for(const file of ['app.js','library.js'])new vm.Script(readFileSync(base+file,'
  assert.equal(mutations[0].attributes.title,undefined,'no synthetic title field');assert.equal(mutations[0].category_id,undefined,'no template ownership');assert.equal(mutations[0].quantity,undefined);assert.equal(mutations[0].location,undefined);assert.equal(mutations[0].title,undefined);
  assert.equal(mutations[0].attributes.year,2006);assert.equal(mutations[0].attributes.links[0].name,'Wikipedia');assert.deepEqual(mutations[0].tags,['Games','Wii']);
  assert.equal(photoSequence,2);assert.equal(mutations[1].primary_image_id,'photo-2');assert.equal(modal.open,false);
+ // Definition management stays separate from collection browsing.
+ await vm.runInContext('showAdmin()',dom.getInternalVMContext());
+ assert.equal(w.document.querySelector('.library-heading h1').textContent,'Administration');
+ assert.equal(w.document.querySelector('#collection-navigation').hidden,true);
+ assert(w.document.querySelector('#stage').textContent.includes('Common fields'));
+ await vm.runInContext('openVocabularyEditor()',dom.getInternalVMContext());
+ const label=modal.querySelector('input');label.value='Condition';label.oninput();
+ modal.querySelector('form').onsubmit({preventDefault(){}});
+ assert.equal(modal.querySelector('.technical-details').open,false);
+ assert(!modal.querySelector('dl').textContent.includes('{}'),'review is human-readable');
+ const beforeField=mutations.length;
+ await [...modal.querySelectorAll('button')].find(button=>button.textContent==='Approve & save').onclick();
+ assert.equal(mutations.length,beforeField+1);assert.equal(mutations.at(-1).operation,'define_field');
+ assert.equal(mutations.at(-1).key,'condition');
+ await vm.runInContext('openTypeEditor(graphVocabulary.templates[0])',dom.getInternalVMContext());
+ assert.equal(modal.querySelector('input').value,'Wii games');
+ for(const remove of [...modal.querySelectorAll('[aria-label^="Remove "]')])remove.click();
+ modal.querySelector('form').onsubmit({preventDefault(){}});
+ assert(modal.querySelector('dl').textContent.includes('None'));
+ await [...modal.querySelectorAll('button')].find(button=>button.textContent==='Approve & save').onclick();
+ assert.equal(mutations.at(-1).operation,'update');assert.equal(mutations.at(-1).category_id,'template-1');assert.deepEqual(mutations.at(-1).attributes,[]);
+ await vm.runInContext('reviewDeletion("template",graphVocabulary.templates[0])',dom.getInternalVMContext());
+ const beforeDelete=mutations.length;assert.equal(mutations.length,beforeDelete);
+ assert(modal.textContent.includes('Existing items will keep'));
+ await [...modal.querySelectorAll('button')].find(button=>button.textContent==='Approve deletion').onclick();
+ assert.equal(mutations.at(-1).operation,'delete');
+ await vm.runInContext('showLibrary()',dom.getInternalVMContext());
+ assert.equal(w.document.querySelector('#collection-navigation').hidden,false);
+ vm.runInContext('stage.replaceChildren(itemDetail({item:{id:"item-1",title:"Test",attributes:{}}}))',dom.getInternalVMContext());
+ [...w.document.querySelectorAll('#stage button')].find(button=>button.textContent==='Delete item').click();
+ assert.equal(modal.open,true);assert(modal.textContent.includes('cannot be undone'));
+ modal.close();
+ vm.runInContext("stage.replaceChildren(textCard("+JSON.stringify('<think>internal trace</think>Ready.\n```json\n{"operation":"update"}\n```')+"))",dom.getInternalVMContext());
+ const answer=w.document.querySelector('#stage .remy-answer');
+ assert.equal(answer.querySelector('p').textContent,'Ready.');assert.equal(answer.querySelector('details').open,false);
+ assert(answer.querySelector('details').textContent.includes('internal trace'));
+ console.log('PASS: administration, common-field approval, template editing and deletion, item deletion, collapsed response details');
  console.log('PASS: visible Remy, registered fields, template defaults, optional title, named link list, multiple photos, approved primary selection');
  dom.window.close();
 })().catch(error=>{console.error(error);process.exitCode=1;dom.window.close()});

@@ -20,6 +20,7 @@ let currentResponse = null;
 let pendingProposals = [];
 let conversationID = getConversationID();
 let requestGeneration = 0;
+let visionConfigured = true;
 
 showConfigurationStatus();
 refreshPendingProposals(false).catch(() => {});
@@ -121,6 +122,7 @@ async function api(path, options = {}) {
 async function showConfigurationStatus() {
   try {
     const status = await api("/api/config");
+    visionConfigured = status.config?.vision_model_configured !== false;
     const missing = [];
     if (!status.config?.model_configured) missing.push("Remy’s AI assistance needs setup");
     if (!status.config?.image_storage_configured) missing.push("photo storage needs setup");
@@ -160,6 +162,7 @@ function renderResponse(response) {
     }
   }
   if (!displayed && !response.summary) renderEmpty();
+  stage.append(technicalDetails({ request: response.request_summary, events: response.events, components: response.components }, "Technical details"));
 }
 
 async function refreshPendingProposals(rerender = true) {
@@ -241,6 +244,7 @@ function proposalCard(proposal, title) {
   } else {
     card.insertAdjacentHTML("beforeend", `<p class="decision ${proposal.status}">${proposal.status === "approved" ? "Approved and saved." : "Rejected. No inventory data was changed."}</p>`);
   }
+  card.append(technicalDetails(proposal, "Proposal details"));
   return card;
 }
 
@@ -286,7 +290,8 @@ function textCard(data) {
   const card = document.createElement("article");
   card.className = "card remy-answer";
   const text = typeof data === "string" ? data : (data?.text || data?.question || "");
-  for (const line of String(text).split("\n")) {
+  const { message, details } = readableAnswer(text);
+  for (const line of message.split("\n")) {
     const paragraph = document.createElement("p");
     const tokens = line.split(/(\*\*[^*]+\*\*|\*[^*]+\*)/g);
     for (const token of tokens) {
@@ -296,6 +301,7 @@ function textCard(data) {
     }
     card.append(paragraph);
   }
+  if (details.length) card.append(technicalDetails(details, "Response details"));
   return card;
 }
 
@@ -438,7 +444,7 @@ function itemDetail(data) {
   appendDetail(fields, "Tags", (item.tags || []).join(", "));
 
   information.append(fields);
-  const edit = document.createElement("button"); edit.className = "secondary"; edit.textContent = "Edit details"; edit.onclick = () => openCatalog(item); information.append(edit);
+  const edit = document.createElement("button"); edit.className = "secondary"; edit.textContent = "Edit details"; edit.onclick = () => openCatalog(item); const actions = document.createElement("div"); actions.className = "actions"; actions.append(edit, button("Delete item", () => reviewDeletion("item", item), "secondary danger-text", "trash")); information.append(actions);
   layout.append(information);
   card.append(layout);
   return card;
@@ -702,13 +708,6 @@ function showItemImage(title, url) {
   imageModal.showModal();
 }
 
-function textCard(text) {
-  const card = document.createElement("article");
-  card.className = "card";
-  card.textContent = text;
-  return card;
-}
-
 function appendDetail(list, label, value) {
   if (value === undefined || value === null || value === "") return;
   const term = document.createElement("dt");
@@ -739,7 +738,7 @@ function setWorking(message) {
 
 function setDialog(response) {
   const icon = ["ready", "thinking", "searching", "cataloging", "celebrating", "error"].includes(response.icon) ? response.icon : "ready";
-  dialog.textContent = truncateDialog(response.message || "What would you like to do?");
+  dialog.textContent = truncateDialog(readableAnswer(response.message || "What would you like to do?").message || "See the results below.");
   setRemyImage(icon);
 }
 
@@ -784,3 +783,20 @@ function enumOptions(attribute) {
   }
 }
 function fieldTypeLabel(type) { return ({ text: "Text", number: "Number", boolean: "Yes / no", date: "Date", enum: "Enumeration" })[type] || prettyKey(type || "text"); }
+
+function technicalDetails(data, label = "Technical details") {
+  const details = document.createElement("details"); details.className = "technical-details";
+  const summary = document.createElement("summary"); summary.textContent = label;
+  const pre = document.createElement("pre"); pre.textContent = JSON.stringify(data, null, 2);
+  details.append(summary, pre); return details;
+}
+
+function readableAnswer(text) {
+  const details = [];
+  let message = String(text).replace(/<(think|thinking|analysis)>[\s\S]*?(?:<\/\1>|$)/gi, value => { details.push(value); return ""; });
+  message = message.replace(/```(?:json)?\s*([\s\S]*?)```/gi, (block, content) => {
+    try { JSON.parse(content); details.push(content); return ""; } catch (_) { return block; }
+  }).trim();
+  try { if (message.startsWith("{") || message.startsWith("[")) { JSON.parse(message); details.push(message); message = "Review the proposed changes below."; } } catch (_) {}
+  return { message, details };
+}
