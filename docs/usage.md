@@ -22,9 +22,9 @@ Use the template selector in **Add item** to start a new item. Its fields, value
 
 ## Add an item
 
-Choose **Add item**, optionally starting from a template. Choose several JPEG, PNG, or GIF pictures up to 12 MB each, or take a picture. Export HEIC as JPEG first. Use **Use as primary** to select the image shown on the collection card.
+Choose **Add item**, then select a template or **Continue without a template** before adding pictures. Remy uses the selected template’s fields, defaults, and tags as context when identifying your photo. Choose several JPEG, PNG, or GIF pictures up to 12 MB each, or take a picture. Export HEIC as JPEG first. Use **Use as primary** to select the image shown on the collection card. Phone-photo orientation is respected, and previews crop from the center without changing the original photo.
 
-Remy automatically suggests details when you add a new picture to a new item. Turn off **Let Remy suggest details when I add a photo** to enter details manually, or use **Suggest details from picture** to request suggestions yourself. Suggestions fill empty fields and preserve your entered values. A local model may take a few minutes to load. You can stop waiting and enter values manually. Check inferred information before approving it. New field names suggested by a model need their own vocabulary proposal before they can be used.
+Remy automatically suggests details when you add a new picture to a new item. A progress panel beside the photo shows when Remy is reading it and which template is being used. Turn off **Let Remy suggest details when I add a photo** to enter details manually, or use **Suggest details from picture** to request suggestions yourself. Suggestions fill empty fields and preserve your entered values. A local model may take a few minutes to load. **Stop reading** cancels identification and keeps your draft. Check inferred information before approving it. New field names suggested by a model need their own vocabulary proposal before they can be used.
 
 Enter tags and pick approved fields. Title is an ordinary optional field, and you can remove it. Location and Quantity are available through the same picker if useful. You can also save an item without metadata and identify it by its pictures and tags.
 

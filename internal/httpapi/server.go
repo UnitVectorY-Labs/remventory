@@ -385,7 +385,12 @@ func (a api) serveItemImage(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
-	object, err := a.images.Get(r.Context(), key)
+	var object itemimages.Object
+	if r.PathValue("variant") == "thumbnail" {
+		object, err = itemimages.LoadThumbnail(r.Context(), a.images, imageRecord.OriginalKey, key)
+	} else {
+		object, err = a.images.Get(r.Context(), key)
+	}
 	if err != nil {
 		a.logger.Error("read item image", "error", err)
 		writeError(w, http.StatusBadGateway, "read image")
@@ -407,7 +412,7 @@ func (a api) serveItemImage(w http.ResponseWriter, r *http.Request) {
 func setImageURLs(images []store.ItemImage) {
 	for i := range images {
 		images[i].OriginalURL = "/api/images/" + images[i].ID + "/original"
-		images[i].ThumbnailURL = "/api/images/" + images[i].ID + "/thumbnail"
+		images[i].ThumbnailURL = "/api/images/" + images[i].ID + "/thumbnail?v=2"
 	}
 }
 

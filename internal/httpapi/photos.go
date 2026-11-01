@@ -1,9 +1,12 @@
 package httpapi
 
 import (
+	"net/http"
+	"strings"
+
 	"github.com/UnitVectorY-Labs/remventory/internal/itemimages"
 	"github.com/UnitVectorY-Labs/remventory/internal/photoidentify"
-	"net/http"
+	"github.com/UnitVectorY-Labs/remventory/internal/store"
 )
 
 func (a api) identifyPhoto(w http.ResponseWriter, r *http.Request) {
@@ -45,7 +48,20 @@ func (a api) identifyPhoto(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "load field vocabulary")
 		return
 	}
-	suggestion, err := photoidentify.Identify(r.Context(), a.cfg, picture, categories, vocabulary)
+	var selected *store.Category
+	if id := strings.TrimSpace(r.FormValue("template_id")); id != "" {
+		for _, template := range vocabulary.Templates {
+			if template.ID == id {
+				selected = &template
+				break
+			}
+		}
+		if selected == nil {
+			writeError(w, http.StatusBadRequest, "The selected template is no longer available. Choose another template and try again.")
+			return
+		}
+	}
+	suggestion, err := photoidentify.Identify(r.Context(), a.cfg, picture, categories, selected, vocabulary)
 	if err != nil {
 		writeError(w, http.StatusBadGateway, err.Error())
 		return

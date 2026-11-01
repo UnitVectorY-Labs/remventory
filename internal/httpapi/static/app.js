@@ -126,6 +126,7 @@ async function showConfigurationStatus() {
     const missing = [];
     if (!status.config?.model_configured) missing.push("Remy’s AI assistance needs setup");
     if (!status.config?.image_storage_configured) missing.push("photo storage needs setup");
+    if (!visionConfigured) missing.push("photo identification needs setup");
     if (missing.length) {
       configurationWarning.hidden = false;
       configurationWarning.textContent = `${missing.join("; ")}; manual cataloging and browsing are available.`;
@@ -218,7 +219,7 @@ function proposalCard(proposal, title) {
   appendDetail(details, "Suggested fields", (payload.field_keys || []).join(", "));
   appendDetail(details, "Default tags", (payload.default_tags || []).join(", "));
   if (payload.default_values) card.append(attributeValueTable(payload.default_values,"Starting values"));
-  if (payload.primary_image_id) { const preview = document.createElement("img"); preview.className="proposal-picture"; preview.src=`/api/images/${encodeURIComponent(payload.primary_image_id)}/thumbnail`; preview.alt="Proposed primary picture"; card.append(preview); }
+  if (payload.primary_image_id) { const preview = document.createElement("img"); preview.className="proposal-picture"; preview.src=`/api/images/${encodeURIComponent(payload.primary_image_id)}/thumbnail?v=2`; preview.alt="Proposed primary picture"; card.append(preview); }
 
   appendDetail(details, "Quantity change", payload.quantity_delta ? signed(payload.quantity_delta) : "");
   card.append(details);
@@ -592,7 +593,7 @@ function itemPictureCell(item, category) {
     button.className = "thumbnail-button";
     button.type = "button";
     button.title = `View picture for ${item.title}`;
-    const thumbnailURL = picture.thumbnail_url || `/api/images/${picture.id}/thumbnail`;
+    const thumbnailURL = picture.thumbnail_url || `/api/images/${picture.id}/thumbnail?v=2`;
     const originalURL = picture.original_url || `/api/images/${picture.id}/original`;
     button.innerHTML = `<img src="${escapeHTML(thumbnailURL)}" alt="Picture of ${escapeHTML(item.title)}">`;
     button.addEventListener("click", () => showItemImage(item.title, originalURL));
@@ -619,14 +620,14 @@ function itemPicturePanel(item) {
     const button = document.createElement("button");
     button.type = "button";
     button.className = "item-picture-button";
-    const thumbnailURL = picture.thumbnail_url || `/api/images/${picture.id}/thumbnail`;
+    const thumbnailURL = picture.thumbnail_url || `/api/images/${picture.id}/thumbnail?v=2`;
     const originalURL = picture.original_url || `/api/images/${picture.id}/original`;
     button.innerHTML = `<img src="${escapeHTML(thumbnailURL)}" alt="Picture of ${escapeHTML(item.title)}"><span>★ Primary picture · View full size</span>`;
     button.addEventListener("click", () => showItemImage(item.title, originalURL));
     section.append(button);
     for (const extra of (item.images || []).slice(1)) {
       const thumbnail = document.createElement("button"); thumbnail.type = "button"; thumbnail.className = "thumbnail-button";
-      thumbnail.innerHTML = `<img src="/api/images/${escapeHTML(extra.id)}/thumbnail" alt="Another picture of ${escapeHTML(item.title)}">`;
+      thumbnail.innerHTML = `<img src="/api/images/${escapeHTML(extra.id)}/thumbnail?v=2" alt="Another picture of ${escapeHTML(item.title)}">`;
       thumbnail.onclick = () => showItemImage(item.title, `/api/images/${extra.id}/original`); section.append(thumbnail);
       const primary = document.createElement("button"); primary.type="button";primary.className="secondary";primary.textContent="Use as primary";primary.onclick=()=>proposePrimaryPicture(item,extra.id);section.append(primary);
     }

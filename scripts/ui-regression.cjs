@@ -10,16 +10,17 @@ w.HTMLDialogElement.prototype.showModal = function(){this.open=true};
 w.HTMLDialogElement.prototype.close = function(){this.open=false;this.onclose?.()};
 w.URL.createObjectURL = file => 'blob:'+file.name; w.URL.revokeObjectURL = ()=>{};
 const vocabulary = {fields:[{key:'title',label:'Title',data_type:'text'},{key:'year',label:'Year',data_type:'number'},{key:'links',label:'Links',data_type:'links'},{key:'description',label:'Description',data_type:'text'}],tag_fields:{Games:['title','year','links']},templates:[{id:'template-1',name:'Wii games',default_tags:['Games','Wii'],default_values:{year:2006},attributes:[{key:'title'},{key:'year'},{key:'links'}]}]};
-let sequence=0,photoSequence=0,identifications=0;
+let sequence=0,photoSequence=0,identifications=0,visionAvailable=true;
+let holdIdentification=true,finishIdentification,identificationTemplate;
 const proposals = new Map(); const mutations=[];
 w.fetch=async(path,options={})=>{
  let data={};
- if(path==='/api/config')data={config:{model_configured:true,image_storage_configured:true}};
+ if(path==='/api/config')data={config:{model_configured:true,image_storage_configured:true,vision_model_configured:visionAvailable}};
  else if(path==='/api/vocabulary')data=vocabulary;
  else if(path==='/api/library')data={total:0,tags:[],types:{},locations:[]};
  else if(path.startsWith('/api/items?'))data={total:0,items:[]};
  else if(path.startsWith('/api/proposals?'))data={proposals:[]};
- else if(path==='/api/photos/identify') {identifications++; data={attributes:{year:2020},tags:[],notes:'Please review.'};}
+ else if(path==='/api/photos/identify') {identifications++; identificationTemplate=options.body.get('template_id'); if(holdIdentification)await new Promise((resolve,reject)=>{finishIdentification=resolve;options.signal.addEventListener('abort',()=>reject(new w.DOMException('Stopped','AbortError')),{once:true})}); data={attributes:{year:2020},tags:[],notes:'Please review.'};}
  else if(['/api/proposals/item','/api/proposals/category','/api/proposals/graph'].includes(path)) {const payload=JSON.parse(options.body);mutations.push(payload);const id='proposal-'+(++sequence);data={id,status:'pending',proposed_payload:payload};proposals.set(id,data)}
  else if(path.startsWith('/api/proposals/')) {const parts=path.split('/');data=proposals.get(parts[3]);if(parts[4]==='decision'){data.status='approved';data.proposed_payload.item_id='saved-item'}}
  else if(path==='/api/items/saved-item/images') data={id:'photo-'+(++photoSequence)};
@@ -40,6 +41,15 @@ for(const file of ['app.js','library.js'])new vm.Script(readFileSync(base+file,'
  modal.querySelector('[aria-label="Link name"]').value='Wikipedia';modal.querySelector('[aria-label="Link URL"]').value='https://en.wikipedia.org/wiki/Wii';
  const fileInput=modal.querySelector('input[multiple]');Object.defineProperty(fileInput,'files',{value:[new w.File(['a'],'front.png',{type:'image/png'}),new w.File(['b'],'back.png',{type:'image/png'})]});fileInput.onchange();await new Promise(resolve=>setTimeout(resolve,0));
  assert.equal(identifications,1,'new photos automatically request editable suggestions');
+ assert.equal(identificationTemplate,'template-1','the selected template accompanies the image');
+ assert.equal(modal.querySelector('.photo-analysis-progress').hidden,false);
+ assert(modal.querySelector('.photo-analysis-progress').textContent.includes('Using Wii games'));
+ assert.equal(modal.querySelector('.catalog-photo').getAttribute('aria-busy'),'true');
+ assert.equal(modal.querySelector('[aria-label="Start from a template"]').disabled,true);
+ assert.equal(modal.querySelector('button[type="submit"]').disabled,true);
+ holdIdentification=false;finishIdentification();await new Promise(resolve=>setTimeout(resolve,0));
+ assert.equal(modal.querySelector('.photo-analysis-progress').hidden,true);
+ assert.equal(modal.querySelector('[aria-label="Start from a template"]').disabled,false);
  assert.equal(modal.querySelector('[aria-label="Year"]').value,'2006','suggestions preserve entered values');
  const primaryButtons=[...modal.querySelectorAll('.primary-choice')];assert.equal(primaryButtons.length,2);primaryButtons[1].click();
  const form=modal.querySelector('form');await form.onsubmit({preventDefault(){}});assert(modal.textContent.includes('back.png (primary)'));
@@ -84,6 +94,36 @@ for(const file of ['app.js','library.js'])new vm.Script(readFileSync(base+file,'
  const answer=w.document.querySelector('#stage .remy-answer');
  assert.equal(answer.querySelector('p').textContent,'Ready.');assert.equal(answer.querySelector('details').open,false);
  assert(answer.querySelector('details').textContent.includes('internal trace'));
+ await vm.runInContext('openCatalog()',dom.getInternalVMContext());
+ assert.equal(modal.querySelector('.catalog-layout').hidden,true,'choose context before photo entry');
+ assert.equal(modal.querySelector('button[type="submit"]').disabled,true);
+ const templatePicker=modal.querySelector('[aria-label="Start from a template"]');
+ templatePicker.value='none';templatePicker.onchange();
+ assert.equal(modal.querySelector('.catalog-layout').hidden,false,'manual entry remains available without a template');
+ assert.equal(modal.querySelector('button[type="submit"]').disabled,false);
+ modal.close();
+ await vm.runInContext('openCatalog(null,graphVocabulary.templates[0])',dom.getInternalVMContext());
+ holdIdentification=true;
+ const cancelledFiles=modal.querySelector('input[multiple]');Object.defineProperty(cancelledFiles,'files',{value:[new w.File(['a'],'cancel.png',{type:'image/png'})]});cancelledFiles.onchange();
+ assert.equal(modal.querySelector('.photo-analysis-progress').hidden,false);
+ [...modal.querySelectorAll('button')].find(button=>button.textContent==='Stop reading').click();await new Promise(resolve=>setTimeout(resolve,0));
+ assert(modal.querySelector('.form-status').textContent.includes('Your draft is still here'));
+ assert.equal(modal.querySelector('.photo-analysis-progress').hidden,true);
+ assert.equal(modal.querySelector('.draft-photo img').getAttribute('src'),'blob:cancel.png');
+ assert.equal(modal.querySelector('button[type="submit"]').disabled,false);
+ modal.close();holdIdentification=false;
+ console.log('PASS: template-first entry, selected identification context, visible progress, and cancellation preserve the draft');
+ // Missing vision configuration must be visible before the user selects a photo.
+ visionAvailable=false;
+ await vm.runInContext('showConfigurationStatus()',dom.getInternalVMContext());
+ assert.equal(w.document.querySelector('#configuration-warning').hidden,false);
+ assert(w.document.querySelector('#configuration-warning').textContent.includes('photo identification needs setup'));
+ await vm.runInContext('openCatalog()',dom.getInternalVMContext());
+ assert.equal([...modal.querySelectorAll('button')].find(button=>button.textContent==='Suggest details from picture').disabled,true);
+ assert.equal(modal.querySelector('input[type="checkbox"]').checked,false);
+ assert(modal.querySelector('.analysis-note').textContent.includes('Photo identification needs setup'));
+ modal.close();
+ console.log('PASS: missing vision configuration is visible and unavailable identification is disabled');
  console.log('PASS: administration, common-field approval, template editing and deletion, item deletion, collapsed response details');
  console.log('PASS: visible Remy, registered fields, template defaults, optional title, named link list, multiple photos, approved primary selection');
  dom.window.close();

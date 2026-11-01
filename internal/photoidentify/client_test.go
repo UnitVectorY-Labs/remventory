@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/UnitVectorY-Labs/remventory/internal/config"
@@ -25,7 +26,7 @@ func TestPhotoSuggestionsAreStructuredAndProviderIndependent(t *testing.T) {
 	}))
 	defer server.Close()
 	cfg := config.Config{VisionBaseURL: server.URL + "/v1", VisionModel: "my-vision-model", VisionAPIKey: "test-key"}
-	result, err := Identify(context.Background(), cfg, []byte("picture"), []store.Category{})
+	result, err := Identify(context.Background(), cfg, []byte("picture"), []store.Category{}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -33,10 +34,45 @@ func TestPhotoSuggestionsAreStructuredAndProviderIndependent(t *testing.T) {
 		t.Fatalf("suggestions lost flexible metadata or accepted invented template: %+v", result)
 	}
 }
+
+func TestPhotoIdentificationIncludesSelectedTemplate(t *testing.T) {
+	template := store.Category{ID: "selected-template", Name: "Nintendo Switch games", Description: "Read the game cover and identify the edition", DefaultTags: []string{"Switch"}, DefaultValues: json.RawMessage(`{"platform":"Nintendo Switch"}`), Attributes: []store.Attribute{{Key: "title", Label: "Title", DataType: "text"}}}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var payload struct {
+			Messages []struct {
+				Content json.RawMessage `json:"content"`
+			} `json:"messages"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+			t.Error(err)
+			return
+		}
+		var prompt string
+		if err := json.Unmarshal(payload.Messages[0].Content, &prompt); err != nil {
+			t.Error(err)
+			return
+		}
+		for _, value := range []string{"Selected template:", "Nintendo Switch games", "Read the game cover", `"platform":"Nintendo Switch"`, `"key":"title"`, "Do not assign ongoing template membership"} {
+			if !strings.Contains(strings.ToLower(prompt), strings.ToLower(value)) {
+				t.Errorf("selected template context missing %q", value)
+			}
+		}
+		w.Write([]byte(`{"choices":[{"message":{"content":"{\"title\":\"Zelda\",\"attributes\":{\"title\":\"Zelda\",\"invented\":true},\"notes\":\"Check the edition.\"}"}}]}`))
+	}))
+	defer server.Close()
+	vocabulary := store.GraphVocabulary{Fields: []store.FieldDefinition{{Key: "title", Label: "Title", DataType: "text"}}}
+	result, err := Identify(context.Background(), config.Config{VisionModel: "vision", VisionBaseURL: server.URL}, []byte("photo"), nil, &template, vocabulary)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Attributes["title"] != "Zelda" || result.Attributes["invented"] != nil {
+		t.Fatalf("template bypassed approved fields: %+v", result)
+	}
+}
 func TestPhotoFailureIsRecoverable(t *testing.T) {
 	for _, body := range []string{`{"choices":[]}`, `{"choices":[{"message":{"content":"not JSON"}}]}`, `garbage`} {
 		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.Write([]byte(body)) }))
-		_, err := Identify(context.Background(), config.Config{VisionBaseURL: server.URL, VisionModel: "vision"}, nil, nil)
+		_, err := Identify(context.Background(), config.Config{VisionBaseURL: server.URL, VisionModel: "vision"}, nil, nil, nil)
 		server.Close()
 		if err == nil {
 			t.Fatalf("accepted %s", body)

@@ -125,26 +125,31 @@ func Prepare(file multipart.File, header *multipart.FileHeader) (Prepared, error
 	if err != nil {
 		return Prepared{}, errors.New("image could not be decoded")
 	}
+	orientation := jpegOrientation(original)
 
 	mimeType := map[string]string{"jpeg": "image/jpeg", "png": "image/png", "gif": "image/gif"}[format]
 	if mimeType == "" || !strings.HasPrefix(http.DetectContentType(original), "image/") {
 		return Prepared{}, errors.New("unsupported image type")
 	}
-	thumbnail, err := squareThumbnail(decoded, ThumbnailSize)
+	thumbnail, err := squareThumbnail(decoded, ThumbnailSize, orientation)
 	if err != nil {
 		return Prepared{}, err
 	}
 
 	id := uuid.NewString()
 	filename := filepath.Base(header.Filename)
+	width, height := decodedConfig.Width, decodedConfig.Height
+	if orientation >= 5 {
+		width, height = height, width
+	}
 	return Prepared{
-		ID: id, OriginalKey: "items/" + id + "/original", ThumbnailKey: "items/" + id + "/thumbnail.jpg",
+		ID: id, OriginalKey: "items/" + id + "/original", ThumbnailKey: "items/" + id + "/thumbnail-v2.jpg",
 		Original: original, Thumbnail: thumbnail, MIMEType: mimeType, OriginalFilename: filename,
-		Width: decodedConfig.Width, Height: decodedConfig.Height,
+		Width: width, Height: height,
 	}, nil
 }
 
-func squareThumbnail(source image.Image, size int) ([]byte, error) {
+func squareThumbnail(source image.Image, size int, orientation uint16) ([]byte, error) {
 	bounds := source.Bounds()
 	side := bounds.Dx()
 	if bounds.Dy() < side {
@@ -152,12 +157,10 @@ func squareThumbnail(source image.Image, size int) ([]byte, error) {
 	}
 	left := bounds.Min.X + (bounds.Dx()-side)/2
 	top := bounds.Min.Y + (bounds.Dy()-side)/2
-	cropped := image.NewRGBA(image.Rect(0, 0, side, side))
-	draw.Draw(cropped, cropped.Bounds(), source, image.Pt(left, top), draw.Src)
 	thumbnail := image.NewRGBA(image.Rect(0, 0, size, size))
-	draw.CatmullRom.Scale(thumbnail, thumbnail.Bounds(), cropped, cropped.Bounds(), draw.Over, nil)
+	draw.CatmullRom.Scale(thumbnail, thumbnail.Bounds(), source, image.Rect(left, top, left+side, top+side), draw.Src, nil)
 	var output bytes.Buffer
-	if err := jpeg.Encode(&output, thumbnail, &jpeg.Options{Quality: 84}); err != nil {
+	if err := jpeg.Encode(&output, orient(thumbnail, orientation), &jpeg.Options{Quality: 84}); err != nil {
 		return nil, fmt.Errorf("encode thumbnail: %w", err)
 	}
 	return output.Bytes(), nil
@@ -174,9 +177,41 @@ func StorePrepared(ctx context.Context, objects ObjectStore, prepared Prepared) 
 	return nil
 }
 
+func LoadThumbnail(ctx context.Context, objects ObjectStore, originalKey, thumbnailKey string) (Object, error) {
+	if !strings.HasSuffix(thumbnailKey, "/thumbnail.jpg") {
+		return objects.Get(ctx, thumbnailKey)
+	}
+	// Old thumbnails were generated without respecting camera orientation. Cache
+	// a corrected derivative under a new key; do not overwrite stored originals.
+	key := strings.TrimSuffix(thumbnailKey, "thumbnail.jpg") + "thumbnail-v2.jpg"
+	if cached, err := objects.Get(ctx, key); err == nil {
+		return cached, nil
+	}
+	original, err := objects.Get(ctx, originalKey)
+	if err != nil {
+		return Object{}, err
+	}
+	defer original.Body.Close()
+	data, err := io.ReadAll(io.LimitReader(original.Body, MaxUploadBytes+1))
+	if err != nil {
+		return Object{}, err
+	}
+	if len(data) > MaxUploadBytes {
+		return Object{}, ErrTooLarge
+	}
+	thumbnail, err := Thumbnail(data)
+	if err != nil {
+		return Object{}, err
+	}
+	if err := objects.Put(ctx, key, "image/jpeg", thumbnail); err != nil {
+		return Object{}, err
+	}
+	return Object{Body: io.NopCloser(bytes.NewReader(thumbnail)), ContentType: "image/jpeg", Size: int64(len(thumbnail))}, nil
+}
+
 // AnalysisImage keeps the entire frame while bounding model input size.
 func AnalysisImage(original []byte) ([]byte, error) {
-	source, _, err := image.Decode(bytes.NewReader(original))
+	source, err := decodeImage(original)
 	if err != nil {
 		return nil, err
 	}
@@ -190,6 +225,31 @@ func AnalysisImage(original []byte) ([]byte, error) {
 	resized := image.NewRGBA(image.Rect(0, 0, width, height))
 	draw.CatmullRom.Scale(resized, resized.Bounds(), source, bounds, draw.Src, nil)
 	var output bytes.Buffer
-	err = jpeg.Encode(&output, resized, &jpeg.Options{Quality: 85})
+	err = jpeg.Encode(&output, orient(resized, jpegOrientation(original)), &jpeg.Options{Quality: 85})
 	return output.Bytes(), err
+}
+
+// Thumbnail also repairs derivatives of previously uploaded phone photos while
+// preserving the original object and its EXIF metadata.
+func Thumbnail(original []byte) ([]byte, error) {
+	source, err := decodeImage(original)
+	if err != nil {
+		return nil, err
+	}
+	return squareThumbnail(source, ThumbnailSize, jpegOrientation(original))
+}
+
+func decodeImage(original []byte) (image.Image, error) {
+	cfg, _, err := image.DecodeConfig(bytes.NewReader(original))
+	if err != nil {
+		return nil, err
+	}
+	if cfg.Width <= 0 || cfg.Height <= 0 || int64(cfg.Width)*int64(cfg.Height) > maxImagePixels {
+		return nil, errors.New("image dimensions are invalid or too large")
+	}
+	source, _, err := image.Decode(bytes.NewReader(original))
+	if err != nil {
+		return nil, err
+	}
+	return source, nil
 }

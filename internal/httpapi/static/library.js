@@ -156,26 +156,30 @@ async function openCatalog(existing = null, startingTemplate = null) {
   const existingPhotos = [...(existing?.images || [])]; const additions = []; let primary = existingPhotos.find(image => image.is_primary)?.id || existingPhotos[0]?.id || null;
   let editor = fieldSetEditor(values, existing ? [] : ["title"]);
   const fieldsHost = el("div"); fieldsHost.append(editor.root);
+  let selectedTemplate = startingTemplate;
+  const templateStep = el("section", "catalog-template-step");
   const replaceValues = (next, suggested = []) => { editor = fieldSetEditor(next, suggested); fieldsHost.replaceChildren(editor.root); };
   const parseTags = () => [...new Set(tags.value.split(",").map(tag => tag.trim()).filter(Boolean))];
   const suggestTagFields = () => { for (const tag of parseTags()) for (const [name, keys] of Object.entries(graphVocabulary.tag_fields)) if (name.toLowerCase() === tag.toLowerCase()) for (const key of keys) editor.add(key); };
   tags.onchange = suggestTagFields;
   if (!existing) {
-    const templates = el("select"); templates.setAttribute("aria-label", "Start from a template"); templates.append(new Option("Start without a template", "")); for (const template of libraryTypes) templates.append(new Option(template.name, template.id));
+    const templates = el("select"); templates.setAttribute("aria-label", "Start from a template"); templates.append(new Option("Choose a template…", "")); for (const template of libraryTypes) templates.append(new Option(template.name, template.id));
+    templates.append(new Option("Continue without a template", "none"));
     const applyTemplate = template => {
       const current = editor.read(); tags.value = [...new Set([...parseTags(), ...(template.default_tags || [])])].join(", ");
       replaceValues({ ...(template.default_values || {}), ...current }, (template.attributes || []).map(field => field.key)); suggestTagFields();
       status.textContent = "Template applied.";
     };
-    templates.onchange = () => { const template = libraryTypes.find(template => template.id === templates.value); if (template) applyTemplate(template); };
-    details.append(labeled("Start from a template · optional", templates));
+    templates.onchange = () => { selectedTemplate = libraryTypes.find(template => template.id === templates.value) || null; if (selectedTemplate) applyTemplate(selectedTemplate); layout.hidden = !templates.value; review.disabled = !templates.value; };
+    templateStep.append(el("h3", "", "1. Start with a template"), labeled("What are you adding?", templates), el("p", "muted", "Remy will use your template’s fields and defaults when reading the photo."));
     if (startingTemplate) { templates.value = startingTemplate.id; applyTemplate(startingTemplate); }
+    else layout.hidden = true;
   }
   details.append(labeled("Tags · separate with commas", tags), el("h3", "", "Fields"), fieldsHost);
   const gallery = el("div", "draft-gallery");
   function renderPhotos() {
     gallery.replaceChildren();
-    const all = [...existingPhotos.map(image => ({ key: image.id, url: image.thumbnail_url || `/api/images/${image.id}/thumbnail`, name: "Saved photo" })), ...additions];
+    const all = [...existingPhotos.map(image => ({ key: image.id, url: image.thumbnail_url || `/api/images/${image.id}/thumbnail?v=2`, name: "Saved photo" })), ...additions];
     if (!all.length) { const empty = el("div", "draft-preview"); empty.append(icon("photo"), el("h3", "", "Pictures")); gallery.append(empty); }
     for (const photo of all) {
       const tile = el("div", "draft-photo"); const img = el("img"); img.src = photo.url; img.alt = photo.name;
@@ -197,30 +201,45 @@ async function openCatalog(existing = null, startingTemplate = null) {
   files.onchange = () => { chooseFiles(files.files); files.value = ""; }; camera.onchange = () => chooseFiles(camera.files);
   const autoSuggest = field("", "checkbox"); autoSuggest.checked = visionConfigured; autoSuggest.disabled = !visionConfigured;
   const analysisNote = el("p", "analysis-note");
+  const progress = el("div", "photo-analysis-progress"); progress.hidden = true; progress.setAttribute("role", "status"); progress.setAttribute("aria-live", "polite");
+  const progressTitle = el("strong"); const progressMessage = el("p");
+  const spinner = el("span", "photo-analysis-spinner"); spinner.setAttribute("aria-hidden", "true");
+  progress.append(spinner, progressTitle, progressMessage);
   const identify = button("Suggest details from picture", async () => {
     if (identifying) return;
     const target = additions.find(photo => photo.key === primary) || additions[0];
     if (!target) { status.textContent = "Choose a new picture for Remy to read."; return; }
     identifying = new AbortController(); identify.disabled = true; review.disabled = true; stop.hidden = false;
-    status.textContent = "Remy is reading the picture. A sleeping model may take a few minutes to wake up…";
+    const controller = identifying;
+    const templatePicker = templateStep.querySelector("select"); if (templatePicker) templatePicker.disabled = true;
+    progress.hidden = false; photos.setAttribute("aria-busy", "true"); identify.textContent = "Reading picture…";
+    progressTitle.textContent = "Remy is reading your picture";
+    progressMessage.textContent = selectedTemplate ? `Using ${selectedTemplate.name} to suggest details. You can keep editing while Remy works.` : "Finding details to suggest. You can keep editing while Remy works.";
+    const waiting = setTimeout(() => { progressMessage.textContent = "Still reading your picture. Some models take a few minutes. You can stop and keep your draft."; }, 15000);
+    status.textContent = "";
     const body = new FormData(); body.append("image", target.file);
+    if (selectedTemplate) body.append("template_id", selectedTemplate.id);
     try {
       const suggestion = await api("/api/photos/identify", { method: "POST", body, signal: identifying.signal });
+      if (controller.signal.aborted || !catalogModal.open) return;
       const next = { ...(suggestion.attributes || {}), ...editor.read() }; if (suggestion.title && !next.title) next.title = suggestion.title;
       replaceValues(next); tags.value = [...new Set([...parseTags(), ...(suggestion.tags || [])])].join(", "); suggestTagFields();
       analysisNote.replaceChildren(el("span", "", `Remy’s unverified suggestions: ${readableAnswer(suggestion.notes || "Please check the details before saving.").message}`));
       const extra = readableAnswer(suggestion.notes || "").details; if (extra.length) analysisNote.append(technicalDetails(extra, "Identification details")); status.textContent = "Review and edit Remy’s suggestions.";
     } catch (error) { status.textContent = error.name === "AbortError" ? "Stopped reading. Your draft is still here." : error.message; }
-    finally { identifying = null; identify.disabled = false; review.disabled = false; stop.hidden = true; }
+    finally { clearTimeout(waiting); identifying = null; identify.disabled = !visionConfigured; identify.textContent = "Suggest details from picture"; review.disabled = false; stop.hidden = true; progress.hidden = true; photos.setAttribute("aria-busy", "false"); if (templatePicker) templatePicker.disabled = false; }
   });
   const stop = button("Stop reading", () => identifying?.abort()); stop.hidden = true;
-  photos.append(gallery, labeled("Choose pictures", files), camera, button("Take a picture", () => camera.click(), "secondary", "camera"), identify, stop, el("p", "muted", "JPEG, PNG, GIF · 12 MB per picture"), ...(!existing ? [labeled("Let Remy suggest details when I add a photo", autoSuggest)] : []), analysisNote); renderPhotos();
+  identify.disabled = !visionConfigured;
+  if (!visionConfigured) analysisNote.textContent = "Photo identification needs setup. You can still add pictures and enter details yourself.";
+  photos.append(el("h3", "", existing ? "Pictures" : "2. Add pictures"), gallery, progress, stop, labeled("Choose pictures", files), camera, button("Take a picture", () => camera.click(), "secondary", "camera"), identify, el("p", "muted", "JPEG, PNG, GIF · 12 MB per picture"), ...(!existing ? [labeled("Let Remy suggest details when I add a photo", autoSuggest)] : []), analysisNote); renderPhotos();
   layout.append(photos, details); const summary = el("div", "catalog-review"); summary.hidden = true;
   const review = el("button", "", "Review changes →"); review.type = "submit";
-  const back = button("Keep editing", () => { reviewing = false; summary.hidden = true; layout.hidden = false; review.textContent = "Review changes →"; back.hidden = true; }); back.hidden = true;
-  const actions = el("div", "actions catalog-actions"); actions.append(back, review); form.append(layout, status, summary, actions); catalogModal.append(form);
+  review.disabled = !existing && !startingTemplate;
+  const back = button("Keep editing", () => { reviewing = false; summary.hidden = true; layout.hidden = false; templateStep.hidden = false; review.textContent = "Review changes →"; back.hidden = true; }); back.hidden = true;
+  const actions = el("div", "actions catalog-actions"); actions.append(back, review); if (!existing) form.append(templateStep); form.append(layout, status, summary, actions); catalogModal.append(form);
   form.onsubmit = async event => {
-    event.preventDefault(); if (busy || identifying) return;
+    event.preventDefault(); if (busy || identifying || (!existing && !templateStep.querySelector("select").value)) return;
     if (!reviewing) {
       frozen = { operation: existing ? "update" : "create", ...(existing ? { item_id: existing.id } : {}), tags: parseTags(), attributes: editor.read(), ...(existingPhotos.some(photo => photo.id === primary) ? { primary_image_id: primary } : {}) };
       summary.replaceChildren(el("h3", "", frozen.attributes.title || frozen.tags.join(" · ") || "Item"));
@@ -229,7 +248,7 @@ async function openCatalog(existing = null, startingTemplate = null) {
       appendDetail(list, "New pictures", additions.map(photo => photo.name + (photo.key === primary ? " (primary)" : "")).join(", "));
       if (existingPhotos.some(photo => photo.id === primary)) appendDetail(list, "Primary picture", "The saved picture selected above");
       summary.append(list);
-      reviewing = true; layout.hidden = true; summary.hidden = false; back.hidden = false; review.textContent = "Approve & save"; return;
+      reviewing = true; layout.hidden = true; templateStep.hidden = true; summary.hidden = false; back.hidden = false; review.textContent = "Approve & save"; return;
     }
     busy = true; review.disabled = true; back.disabled = true; catalogModal.querySelector(".card-heading button").disabled = true;
     try {

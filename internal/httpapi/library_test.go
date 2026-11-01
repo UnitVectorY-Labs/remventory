@@ -252,6 +252,55 @@ func TestLibraryApprovalAndPhotos(t *testing.T) {
 	call("POST", "/api/proposals/"+templateProposal["id"].(string)+"/decision", map[string]bool{"approve": true})
 	templates := call("GET", "/api/categories", nil)["categories"].([]any)
 	templateID := templates[0].(map[string]any)["id"].(string)
+	// The selected creation template must reach vision without changing inventory.
+	var visionCalls atomic.Int32
+	vision := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		visionCalls.Add(1)
+		var request struct {
+			Messages []struct {
+				Content json.RawMessage `json:"content"`
+			} `json:"messages"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+			t.Error(err)
+			return
+		}
+		var prompt string
+		if err := json.Unmarshal(request.Messages[0].Content, &prompt); err != nil {
+			t.Error(err)
+			return
+		}
+		if !strings.Contains(prompt, "Selected template:") || !strings.Contains(prompt, templateID) || !strings.Contains(prompt, "Game suggestions") {
+			t.Error("selected template did not reach vision provider")
+		}
+		w.Write([]byte(`{"choices":[{"message":{"content":"{\"title\":\"Suggested game\",\"attributes\":{},\"notes\":\"Check the cover.\"}"}}]}`))
+	}))
+	defer vision.Close()
+	photoHandler := New(Options{Config: config.Config{VisionModel: "vision", VisionBaseURL: vision.URL}, Store: repo, Logger: slog.Default()})
+	identify := func(id string, expected int) {
+		t.Helper()
+		var body bytes.Buffer
+		writer := multipart.NewWriter(&body)
+		part, _ := writer.CreateFormFile("image", "game.png")
+		part.Write(original.Bytes())
+		writer.WriteField("template_id", id)
+		writer.Close()
+		request := httptest.NewRequest("POST", "/api/photos/identify", &body)
+		request.Header.Set("Content-Type", writer.FormDataContentType())
+		response := httptest.NewRecorder()
+		photoHandler.ServeHTTP(response, request)
+		if response.Code != expected {
+			t.Fatalf("identify with template: %d %s", response.Code, response.Body.String())
+		}
+	}
+	identify(templateID, http.StatusOK)
+	identify(uuid.NewString(), http.StatusBadRequest)
+	if visionCalls.Load() != 1 {
+		t.Fatal("unavailable template was sent to provider")
+	}
+	if total := call("GET", "/api/items", nil)["total"].(float64); total != 2 {
+		t.Fatal("identification saved an inventory item")
+	}
 	flexible := call("POST", "/api/proposals/item", map[string]any{"title": "Flexible game", "category_id": templateID, "attributes": map[string]any{"links": []any{map[string]any{"name": "Reference", "url": "https://example.com/game"}}, "description": "No year is known"}})
 	approved := call("POST", "/api/proposals/"+flexible["id"].(string)+"/decision", map[string]bool{"approve": true})
 	flexibleID := approved["proposed_payload"].(map[string]any)["item_id"].(string)
@@ -263,7 +312,8 @@ func TestLibraryApprovalAndPhotos(t *testing.T) {
 	editedTemplate := call("POST", "/api/proposals/category", map[string]any{"operation": "update", "category_id": templateID, "name": "Empty starting point", "attributes": []any{}, "default_tags": []string{}, "default_values": map[string]any{}})
 	call("POST", "/api/proposals/"+editedTemplate["id"].(string)+"/decision", map[string]bool{"approve": true})
 	emptyTemplate := call("GET", "/api/categories/"+templateID, nil)
-	if len(emptyTemplate["attributes"].([]any)) != 0 || len(emptyTemplate["default_values"].(map[string]any)) != 0 || len(emptyTemplate["default_tags"].([]any)) != 0 {
+	emptyAttributes, _ := emptyTemplate["attributes"].([]any) // Empty attributes are omitted from JSON.
+	if len(emptyAttributes) != 0 || len(emptyTemplate["default_values"].(map[string]any)) != 0 || len(emptyTemplate["default_tags"].([]any)) != 0 {
 		t.Fatal("template edit did not clear starting fields, defaults, and tags")
 	}
 	removal := call("POST", "/api/proposals/category", map[string]any{"operation": "delete", "category_id": templateID})
