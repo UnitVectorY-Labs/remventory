@@ -1,0 +1,311 @@
+let libraryTypes = [];
+let graphVocabulary = { fields: [], tag_fields: {}, templates: [] };
+let libraryFilters = { q: "", category_id: "", tag: "", location: "" };
+let libraryPage = 0;
+let libraryGeneration = 0;
+const catalogModal = document.querySelector("#catalog-modal");
+const glyphs = ["▤", "♫", "▣", "♟", "◈", "▧"];
+const typeGlyph = (name = "") => /book/i.test(name) ? "▤" : /music|vinyl|cd/i.test(name) ? "♫" : /movie|film|dvd|blu/i.test(name) ? "▣" : /game/i.test(name) ? "♟" : "◈";
+const el = (tag, className, text) => { const node = document.createElement(tag); if (className) node.className = className; if (text !== undefined) node.textContent = text; return node; };
+const button = (text, action, className = "secondary") => { const node = el("button", className, text); node.type = "button"; node.onclick = action; return node; };
+document.querySelector("#library-home").onclick = () => { libraryFilters = { q: "", category_id: "", tag: "", location: "" }; showLibrary(); };
+document.querySelector("#add-item").onclick = () => openCatalog();
+document.querySelector("#add-type").onclick = () => openTypeEditor();
+document.querySelector("#review-changes").onclick = async () => {
+  libraryGeneration++;
+  try { await refreshPendingProposals(false); renderResponse({ summary: pendingProposals.length ? "Pending changes." : "No pending changes.", components: [] }); }
+  catch (error) { renderError(error); }
+};
+document.querySelector("#toggle-remy").onclick = () => input.focus();
+document.querySelector("#manage-fields").onclick = () => openVocabularyEditor();
+
+async function loadLibraryMeta() {
+  const [vocabulary, facets, proposals] = await Promise.all([api("/api/vocabulary"), api("/api/library"), api("/api/proposals?limit=100")]);
+  graphVocabulary = vocabulary;
+  pendingProposals = proposals.proposals || [];
+  libraryTypes = graphVocabulary.templates || [];
+  const list = document.querySelector("#type-filters"); list.replaceChildren();
+  for (const template of libraryTypes) list.append(button(template.name, () => openCatalog(null, template), "nav-button"));
+  const tags = document.querySelector("#tag-filters"); tags.replaceChildren();
+  for (const tag of facets.tags || []) tags.append(button(`${tag.name} · ${tag.count}`, () => { const selected = libraryFilters.tag.split(",").filter(Boolean); libraryFilters.tag = (selected.includes(tag.name) ? selected.filter(value => value !== tag.name) : [...selected, tag.name]).join(","); showLibrary(); }, `tag ${libraryFilters.tag.split(",").includes(tag.name) ? "selected" : ""}`));
+  document.querySelector("#review-count").textContent = pendingProposals.length || "";
+  return facets;
+}
+
+async function showLibrary(page = 0) {
+  if (activeController) return;
+  const generation = ++libraryGeneration; ++requestGeneration;
+  currentResponse = null; libraryPage = page;
+  stage.innerHTML = '<p class="muted" role="status">Loading collection…</p>';
+  try {
+    const facets = await loadLibraryMeta();
+    const params = new URLSearchParams({ ...libraryFilters, limit: "36", offset: String(page * 36) });
+    const result = await api(`/api/items?${params}`);
+    if (generation !== libraryGeneration) return;
+    stage.replaceChildren();
+    const toolbar = el("form", "library-toolbar");
+    const search = el("input"); search.type = "search"; search.placeholder = "Search tags and fields…"; search.setAttribute("aria-label", "Search collection"); search.value = libraryFilters.q;
+    const submit = el("button", "secondary", "Search"); submit.type = "submit";
+    const smart = button("Ask Remy to find it", () => { if (search.value.trim()) { libraryGeneration++; askRemy(`Find in my inventory: ${search.value.trim()}`); } });
+    toolbar.append(search, submit, smart);
+    toolbar.onsubmit = event => { event.preventDefault(); libraryFilters.q = search.value.trim(); showLibrary(); };
+    stage.append(toolbar);
+    const caption = el("div", "shelf-caption");
+    caption.append(el("p", "", `${result.total} ${result.total === 1 ? "item" : "items"}`));
+    const active = Object.entries(libraryFilters).filter(([,value]) => value);
+    if (active.length) caption.append(button("Clear filters", () => { libraryFilters = { q: "", category_id: "", tag: "", location: "" }; showLibrary(); }, "plain-button"));
+    if (libraryFilters.tag) caption.append(el("span", "tag selected", libraryFilters.tag));
+    stage.append(caption);
+    const items = result.items || [];
+    if (!items.length) {
+      const empty = el("div", "library-empty"); empty.innerHTML = `<span class="empty-symbol">${active.length ? "⌕" : "▤"}</span><h2>${active.length ? "No matching items" : "No items yet"}</h2>`;
+      empty.append(button(active.length ? "Clear filters" : "＋ Catalog your first item", () => active.length ? document.querySelector("#library-home").click() : openCatalog(), "")); stage.append(empty);
+    } else {
+      const grid = el("div", "inventory-grid");
+      for (const item of items) {
+        const type = libraryTypes.find(type => type.id === item.category_id) || {};
+        const card = button("", () => { ++libraryGeneration; openItemDetail(item, type); }, "inventory-card");
+        const picture = el("div", "inventory-picture");
+        if (item.images?.length) { const img = el("img"); img.src = (item.images.find(image => image.is_primary) || item.images[0]).thumbnail_url; img.alt = item.title; img.loading = "lazy"; picture.append(img); }
+        else { picture.classList.add("picture-placeholder"); picture.append(el("span", "", typeGlyph(type.name))); }
+        const info = el("div", "inventory-info"); info.append(el("h2", "", item.title));
+        const tags = el("div", "card-tags"); for (const tag of (item.tags || []).slice(0, 3)) tags.append(el("span", "tag", tag)); info.append(tags);
+        card.append(picture, info); grid.append(card);
+      }
+      stage.append(grid);
+    }
+    if (result.total > 36) { const pager = el("div", "actions"); const previous = button("← Previous", () => showLibrary(page - 1)); previous.disabled = page === 0; const next = button("Next →", () => showLibrary(page + 1)); next.disabled = (page + 1) * 36 >= result.total; pager.append(previous, el("span", "muted", `Page ${page + 1} of ${Math.ceil(result.total / 36)}`), next); stage.append(pager); }
+  } catch (error) { if (generation === libraryGeneration) renderError(error); }
+}
+
+function labeled(label, control) { const wrapper = el("label", "form-field"); wrapper.append(el("span", "", label), control); return wrapper; }
+function field(value = "", type = "text") { const node = el("input"); node.type = type; node.value = value; return node; }
+function dialogHeader(title) {
+  const header = el("div", "card-heading"); const heading = el("h2", "", title); heading.id = "catalog-title";
+  header.append(heading, button("×", () => catalogModal.close(), "icon-button secondary")); header.lastChild.setAttribute("aria-label", "Close"); return header;
+}
+
+
+function registeredFieldEditor(definition, value, onRemove) {
+  const row = el("section", "registered-field"); row.dataset.fieldKey = definition.key;
+  const heading = el("div", "field-heading"); heading.append(el("strong", "", definition.label), el("small", "muted", definition.data_type), button("×", onRemove, "plain-button")); heading.lastChild.setAttribute("aria-label", `Remove ${definition.label}`); row.append(heading);
+  let read;
+  if (definition.data_type === "links") {
+    const links = el("div", "link-list");
+    const addLink = (link = {}) => {
+      const entry = el("div", "link-entry"); const name = field(link.name || ""); name.placeholder = "Name, e.g. Wikipedia"; name.setAttribute("aria-label", "Link name");
+      const url = field(link.url || "", "url"); url.placeholder = "https://…"; url.setAttribute("aria-label", "Link URL"); entry.append(name, url, button("×", () => entry.remove(), "plain-button")); links.append(entry);
+    };
+    for (const link of Array.isArray(value) ? value : []) addLink(link);
+    row.append(links, button("＋ Add a link", () => addLink()));
+    read = () => [...links.children].map(entry => { const [name, url] = entry.querySelectorAll("input"); return { name: name.value.trim(), url: url.value.trim() }; }).filter(link => link.name || link.url);
+  } else {
+    let control;
+    if (["enum", "boolean"].includes(definition.data_type)) {
+      control = el("select"); control.append(new Option("Not set", ""));
+      for (const option of definition.data_type === "boolean" ? ["true", "false"] : definition.config?.options || []) control.append(new Option(String(option), String(option)));
+      control.value = value === undefined ? "" : String(value);
+    } else if (definition.key === "description") { control = el("textarea"); control.rows = 3; control.value = value ?? ""; }
+    else control = field(definition.data_type === "json" ? JSON.stringify(value ?? null) : value ?? "", ["number", "date"].includes(definition.data_type) ? definition.data_type : "text");
+    if (definition.data_type === "number") control.step = "any";
+    control.setAttribute("aria-label", definition.label); row.append(control);
+    read = () => control.value === "" ? undefined : definition.data_type === "number" ? Number(control.value) : definition.data_type === "boolean" ? control.value === "true" : definition.data_type === "json" ? JSON.parse(control.value) : control.value;
+  }
+  return { row, read };
+}
+
+function fieldSetEditor(initialValues = {}, suggestedKeys = []) {
+  const root = el("div", "field-set-editor"); const rows = el("div"); const entries = new Map();
+  const picker = el("select"); picker.setAttribute("aria-label", "Choose a defined field");
+  function refreshPicker() { picker.replaceChildren(new Option("Add a defined field…", "")); for (const definition of graphVocabulary.fields) if (!entries.has(definition.key)) picker.append(new Option(definition.label, definition.key)); }
+  function add(key, value) {
+    if (entries.has(key)) return;
+    const definition = graphVocabulary.fields.find(field => field.key === key); if (!definition) return;
+    const entry = registeredFieldEditor(definition, value, () => { entry.row.remove(); entries.delete(key); refreshPicker(); }); entries.set(key, entry); rows.append(entry.row); refreshPicker();
+  }
+  picker.onchange = () => { if (picker.value) add(picker.value); };
+  root.append(rows, picker);
+  for (const key of new Set([...Object.keys(initialValues), ...suggestedKeys])) add(key, initialValues[key]);
+  refreshPicker();
+  return { root, add, keys: () => [...entries.keys()], read: () => { const values = {}; for (const [key, entry] of entries) { const value = entry.read(); if (value !== undefined) values[key] = value; } return values; } };
+}
+
+async function confirmStoredProposal(id) {
+  let proposal = await api(`/api/proposals/${id}`);
+  if (proposal.status === "pending") proposal = await api(`/api/proposals/${id}/decision`, { method: "POST", body: JSON.stringify({ approve: true }) });
+  if (proposal.status !== "approved") throw new Error("This proposal was rejected. Review the pending changes before trying again.");
+  return proposal;
+}
+
+async function openCatalog(existing = null, startingTemplate = null) {
+  try { await loadLibraryMeta(); } catch (error) { renderError(error); return; }
+  catalogModal.replaceChildren(dialogHeader(existing ? "Edit tags, fields, and pictures" : "Add to your collection"));
+  const form = el("form", "catalog-form"); const layout = el("div", "catalog-layout"); const photos = el("section", "catalog-photo"); const details = el("section", "catalog-fields");
+  const status = el("p", "form-status"); status.setAttribute("role", "status");
+  const tags = field((existing?.tags || []).join(", ")); tags.placeholder = "Consoles, Wii, Nintendo";
+  let values = { ...(existing?.attributes || {}) }, busy = false, identifying = null, reviewing = false, proposalID = null, savedItemID = existing?.id || null, recordSaved = false, frozen = null, primaryProposalID = null;
+  const existingPhotos = [...(existing?.images || [])]; const additions = []; let primary = existingPhotos.find(image => image.is_primary)?.id || existingPhotos[0]?.id || null;
+  let editor = fieldSetEditor(values, existing ? [] : ["title"]);
+  const fieldsHost = el("div"); fieldsHost.append(editor.root);
+  const replaceValues = (next, suggested = []) => { editor = fieldSetEditor(next, suggested); fieldsHost.replaceChildren(editor.root); };
+  const parseTags = () => [...new Set(tags.value.split(",").map(tag => tag.trim()).filter(Boolean))];
+  const suggestTagFields = () => { for (const tag of parseTags()) for (const [name, keys] of Object.entries(graphVocabulary.tag_fields)) if (name.toLowerCase() === tag.toLowerCase()) for (const key of keys) editor.add(key); };
+  tags.onchange = suggestTagFields;
+  if (!existing) {
+    const templates = el("select"); templates.setAttribute("aria-label", "Start from a template"); templates.append(new Option("Start without a template", "")); for (const template of libraryTypes) templates.append(new Option(template.name, template.id));
+    const applyTemplate = template => {
+      const current = editor.read(); tags.value = [...new Set([...parseTags(), ...(template.default_tags || [])])].join(", ");
+      replaceValues({ ...(template.default_values || {}), ...current }, (template.attributes || []).map(field => field.key)); suggestTagFields();
+      status.textContent = "Template applied.";
+    };
+    templates.onchange = () => { const template = libraryTypes.find(template => template.id === templates.value); if (template) applyTemplate(template); };
+    details.append(labeled("Start from a template · optional", templates));
+    if (startingTemplate) { templates.value = startingTemplate.id; applyTemplate(startingTemplate); }
+  }
+  details.append(labeled("Tags · separate with commas", tags), el("h3", "", "Fields"), fieldsHost);
+  const gallery = el("div", "draft-gallery");
+  function renderPhotos() {
+    gallery.replaceChildren();
+    const all = [...existingPhotos.map(image => ({ key: image.id, url: image.thumbnail_url || `/api/images/${image.id}/thumbnail`, name: "Saved photo" })), ...additions];
+    if (!all.length) { const empty = el("div", "draft-preview"); empty.innerHTML = "<span>▧</span><h3>Pictures</h3>"; gallery.append(empty); }
+    for (const photo of all) {
+      const tile = el("div", "draft-photo"); const img = el("img"); img.src = photo.url; img.alt = photo.name;
+      tile.append(img, button(primary === photo.key ? "★ Primary picture" : "Use as primary", () => { primary = photo.key; renderPhotos(); }, primary === photo.key ? "primary-choice selected" : "primary-choice secondary"));
+      if (photo.file) tile.append(button("Remove", () => { const index = additions.indexOf(photo); additions.splice(index, 1); URL.revokeObjectURL(photo.url); if (primary === photo.key) primary = existingPhotos[0]?.id || additions[0]?.key || null; renderPhotos(); }));
+      gallery.append(tile);
+    }
+  }
+  const files = field("", "file"); files.multiple = true; files.accept = "image/jpeg,image/png,image/gif";
+  const camera = field("", "file"); camera.accept = "image/*"; camera.setAttribute("capture", "environment"); camera.hidden = true;
+  const chooseFiles = selected => {
+    for (const file of selected) {
+      if (file.size > 12 * 1024 * 1024 || !["image/jpeg", "image/png", "image/gif"].includes(file.type)) { status.textContent = "Use JPEG, PNG, or GIF up to 12 MB per photo. Export HEIC as JPEG first."; continue; }
+      const photo = { key: makeUUID(), file, url: URL.createObjectURL(file), name: file.name, uploadedID: null }; additions.push(photo); if (!primary) primary = photo.key;
+    }
+    renderPhotos();
+  };
+  files.onchange = () => { chooseFiles(files.files); files.value = ""; }; camera.onchange = () => chooseFiles(camera.files);
+  const analysisNote = el("p", "analysis-note");
+  const identify = button("✦ Let Remy read a picture", async () => {
+    if (identifying) return;
+    const target = additions.find(photo => photo.key === primary) || additions[0];
+    if (!target) { status.textContent = "Choose a new picture for Remy to read."; return; }
+    identifying = new AbortController(); identify.disabled = true; review.disabled = true; stop.hidden = false;
+    status.textContent = "Remy is reading the picture. A sleeping model may take a few minutes to wake up…";
+    const body = new FormData(); body.append("image", target.file);
+    try {
+      const suggestion = await api("/api/photos/identify", { method: "POST", body, signal: identifying.signal });
+      const next = { ...editor.read(), ...(suggestion.attributes || {}) }; if (suggestion.title && !next.title) next.title = suggestion.title;
+      replaceValues(next); tags.value = [...new Set([...parseTags(), ...(suggestion.tags || [])])].join(", "); suggestTagFields();
+      analysisNote.textContent = `Remy’s unverified suggestions: ${suggestion.notes || "Please check the details before saving."}`; status.textContent = "Review and edit Remy’s suggestions.";
+    } catch (error) { status.textContent = error.name === "AbortError" ? "Stopped reading. Your draft is still here." : error.message; }
+    finally { identifying = null; identify.disabled = false; review.disabled = false; stop.hidden = true; }
+  });
+  const stop = button("Stop reading", () => identifying?.abort()); stop.hidden = true;
+  photos.append(gallery, labeled("Choose pictures", files), camera, button("Take a picture", () => camera.click()), identify, stop, el("p", "muted", "JPEG, PNG, GIF · 12 MB per picture"), analysisNote); renderPhotos();
+  layout.append(photos, details); const summary = el("div", "catalog-review"); summary.hidden = true;
+  const review = el("button", "", "Review changes →"); review.type = "submit";
+  const back = button("Keep editing", () => { reviewing = false; summary.hidden = true; layout.hidden = false; review.textContent = "Review changes →"; back.hidden = true; }); back.hidden = true;
+  const actions = el("div", "actions catalog-actions"); actions.append(back, review); form.append(layout, status, summary, actions); catalogModal.append(form);
+  form.onsubmit = async event => {
+    event.preventDefault(); if (busy || identifying) return;
+    if (!reviewing) {
+      frozen = { operation: existing ? "update" : "create", ...(existing ? { item_id: existing.id } : {}), tags: parseTags(), attributes: editor.read(), ...(existingPhotos.some(photo => photo.id === primary) ? { primary_image_id: primary } : {}) };
+      summary.replaceChildren(el("h3", "", frozen.attributes.title || frozen.tags.join(" · ") || "Item"));
+      const list = el("dl", "details"); appendDetail(list, "Tags", frozen.tags.join(", "));
+      for (const [key, value] of Object.entries(frozen.attributes)) appendAttributeDetail(list, key, value);
+      appendDetail(list, "New pictures", additions.map(photo => photo.name + (photo.key === primary ? " (primary)" : "")).join(", "));
+      if (existingPhotos.some(photo => photo.id === primary)) appendDetail(list, "Primary picture", "The saved picture selected above");
+      summary.append(list);
+      reviewing = true; layout.hidden = true; summary.hidden = false; back.hidden = false; review.textContent = "Approve & save"; return;
+    }
+    busy = true; review.disabled = true; back.disabled = true; catalogModal.querySelector(".card-heading button").disabled = true;
+    try {
+      if (!recordSaved) {
+        status.textContent = "Saving approved tags and fields…";
+        if (!proposalID) { const proposal = await api("/api/proposals/item", { method: "POST", body: JSON.stringify(frozen) }); proposalID = proposal.id; }
+        const approved = await confirmStoredProposal(proposalID); savedItemID = approved.proposed_payload.item_id; recordSaved = true; back.hidden = true;
+      }
+      for (const [index, photo] of additions.entries()) if (!photo.uploadedID) {
+        status.textContent = `Saving picture ${index + 1} of ${additions.length}…`; const body = new FormData(); body.append("image", photo.file);
+        const saved = await api(`/api/items/${savedItemID}/images`, { method: "POST", body }); photo.uploadedID = saved.id;
+      }
+      const desiredPrimary = additions.find(photo => photo.key === primary)?.uploadedID || primary;
+      if (desiredPrimary && desiredPrimary !== frozen.primary_image_id) {
+        if (!primaryProposalID) { const proposal = await api("/api/proposals/item", { method: "POST", body: JSON.stringify({ ...frozen, operation: "update", item_id: savedItemID, primary_image_id: desiredPrimary }) }); primaryProposalID = proposal.id; }
+        await confirmStoredProposal(primaryProposalID);
+      }
+      busy = false; catalogModal.close(); await showLibrary(); setDialog({ icon: "celebrating", message: "Saved." });
+    } catch (error) { status.textContent = recordSaved ? `Tags and fields are saved. Pictures or primary selection need another try: ${error.message}. Keep this window open to retry.` : error.message; review.textContent = "Retry saving"; }
+    finally { busy = false; review.disabled = false; back.disabled = !!proposalID; catalogModal.querySelector(".card-heading button").disabled = false; }
+  };
+  catalogModal.oncancel = event => { if (busy) event.preventDefault(); };
+  catalogModal.onclose = () => { identifying?.abort(); for (const photo of additions) URL.revokeObjectURL(photo.url); };
+  if (!catalogModal.open) catalogModal.showModal();
+}
+
+function appendAttributeDetail(list, key, value) {
+  const label = graphVocabulary.fields.find(field => field.key === key)?.label || prettyKey(key);
+  if (graphVocabulary.fields.find(field => field.key === key)?.data_type === "links" && Array.isArray(value)) { for (const link of value) appendDetail(list, link.name, link.url); }
+  else appendDetail(list, label, formatValue(value));
+}
+
+function reviewDefinition(path, payload, title, restore) {
+  catalogModal.replaceChildren(dialogHeader(title)); const list = el("dl", "details");
+  for (const [key, value] of Object.entries(payload)) if (key !== "operation") appendDetail(list, prettyKey(key), typeof value === "object" ? JSON.stringify(value, null, 2) : value);
+  const status = el("p", "form-status"); status.setAttribute("role", "status"); let busy = false, proposalID = null;
+  const approve = button("Approve & save", async () => {
+    if (busy) return; busy = true; approve.disabled = true; edit.disabled = true; catalogModal.querySelector(".card-heading button").disabled = true;
+    try { if (!proposalID) { const proposal = await api(path, { method: "POST", body: JSON.stringify(payload) }); proposalID = proposal.id; } await confirmStoredProposal(proposalID); busy = false; catalogModal.close(); await loadLibraryMeta(); setDialog({ icon: "celebrating", message: "Saved." }); }
+    catch (error) { status.textContent = error.message; }
+    finally { busy = false; approve.disabled = false; edit.disabled = !!proposalID; catalogModal.querySelector(".card-heading button").disabled = false; }
+  }, "");
+  const edit = button("Keep editing", restore); const actions = el("div", "actions"); actions.append(edit, approve); catalogModal.append(list, status, actions);
+  catalogModal.oncancel = event => { if (busy) event.preventDefault(); }; catalogModal.onclose = null;
+}
+
+async function openVocabularyEditor() {
+  try { await loadLibraryMeta(); } catch (error) { renderError(error); return; }
+  const content = el("div", "vocabulary-editor");
+  const known = el("div", "vocabulary-list"); for (const field of graphVocabulary.fields) known.append(el("span", "tag", `${field.label} · ${field.data_type}`)); content.append(known);
+  const form = el("form", "type-form"); form.append(el("h3", "", "Define a shared field"));
+  const label = field(); label.required = true; const key = field(); key.required = true; key.pattern = "[a-z][a-z0-9_]{0,63}"; label.oninput = () => { if (!key.dataset.edited) key.value = label.value.toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_|_$/g, ""); }; key.oninput = () => { key.dataset.edited = "true"; };
+  const kind = el("select"); for (const type of ["text", "number", "boolean", "date", "links", "enum"]) kind.append(new Option(type, type));
+  const options = field(); options.placeholder = "For enum fields: separate choices with commas";
+  const submit = el("button", "", "Review field definition"); submit.type = "submit";
+  form.append(labeled("Label", label), labeled("Stable field key", key), labeled("Value type", kind), labeled("Choices · enum only", options), submit);
+  form.onsubmit = event => { event.preventDefault(); reviewDefinition("/api/proposals/graph", { operation: "define_field", key: key.value, label: label.value, data_type: kind.value, config: kind.value === "enum" ? { options: options.value.split(",").map(value => value.trim()).filter(Boolean) } : {} }, "Review shared field", restore); };
+  const association = el("form", "type-form"); association.append(el("h3", "", "Suggest fields for a tag")); const tag = field(); tag.required = true; tag.placeholder = "Wii, Games, Books…";
+  const checks = el("div", "field-checks");
+  const showChecks = () => { checks.replaceChildren(); const selected = Object.entries(graphVocabulary.tag_fields).find(([name]) => name.toLowerCase() === tag.value.trim().toLowerCase())?.[1] || []; for (const definition of graphVocabulary.fields) { const check = field("", "checkbox"); check.value = definition.key; check.checked = selected.includes(definition.key); checks.append(labeled(definition.label, check)); } };
+  tag.onchange = showChecks; showChecks(); const save = el("button", "", "Review tag suggestions"); save.type = "submit"; association.append(labeled("Tag", tag), checks, save);
+  association.onsubmit = event => { event.preventDefault(); reviewDefinition("/api/proposals/graph", { operation: "suggest_fields", tag: tag.value.trim(), field_keys: [...checks.querySelectorAll("input:checked")].map(input => input.value) }, "Review suggested fields", restore); };
+  content.append(form, association);
+  function restore() { catalogModal.replaceChildren(dialogHeader("Fields & tag suggestions"), content); catalogModal.oncancel = null; }
+  restore(); catalogModal.onclose = null; if (!catalogModal.open) catalogModal.showModal();
+}
+
+async function openTypeEditor() {
+  try { await loadLibraryMeta(); } catch (error) { renderError(error); return; }
+  const content = el("form", "type-form"); const name = field(); name.required = true; const tags = field(); tags.placeholder = "Games, Wii";
+  const editor = fieldSetEditor({}, []); content.append(labeled("Template name", name), labeled("Default tags", tags), editor.root);
+  const submit = el("button", "", "Review template"); submit.type = "submit"; content.append(submit);
+  content.onsubmit = event => { event.preventDefault(); const keys = editor.keys(); reviewDefinition("/api/proposals/category", { operation: "create", name: name.value.trim(), default_tags: tags.value.split(",").map(value => value.trim()).filter(Boolean), default_values: editor.read(), attributes: keys.map(key => ({ ...graphVocabulary.fields.find(field => field.key === key), required: false })) }, "Review creation template", restore); };
+  function restore() { catalogModal.replaceChildren(dialogHeader("Create a starting template"), content); catalogModal.oncancel = null; }
+  restore(); catalogModal.onclose = null; if (!catalogModal.open) catalogModal.showModal();
+}
+if (!new URLSearchParams(location.search).get("message")) showLibrary();
+
+async function proposePrimaryPicture(item, imageID) {
+  try {
+    const proposal = await api("/api/proposals/item", { method: "POST", body: JSON.stringify({ operation: "update", item_id: item.id, attributes: item.attributes || {}, tags: item.tags || [], primary_image_id: imageID }) });
+    pendingProposals = pendingProposals.filter(candidate => candidate.id !== proposal.id); pendingProposals.push(proposal);
+    renderResponse({ summary: "Review this picture as the primary image for the item.", components: [] });
+  } catch (error) { renderError(error); }
+}
+function vocabularyCard(vocabulary) {
+  const card = el("article", "card"); card.append(el("h2", "", "Shared fields & tag suggestions"));
+  const fields = el("div", "vocabulary-list"); for (const definition of vocabulary.fields || []) fields.append(el("span", "tag", `${definition.label} · ${definition.data_type}`)); card.append(fields);
+  for (const [tag, keys] of Object.entries(vocabulary.tag_fields || {})) card.append(el("p", "muted", `${tag}: ${keys.join(", ")}`));
+  card.append(button("Manage vocabulary", () => openVocabularyEditor())); return card;
+}

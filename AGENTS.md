@@ -16,15 +16,15 @@ Remventory is a single Go application for a self-hosted, agent-first inventory p
 
 ## Implementation Rules
 
-- Do not commit category, item, or duplicate-resolution changes directly from agent output. Create a proposal first; commit only through an explicit confirmation path.
-- Keep the web UI Remy-centered. Do not make a spreadsheet clone or a serial chat transcript the primary output.
-- Keep category definitions structured and item-specific values in JSONB.
-- Do not introduce RAG, embeddings, vector search, file uploads, full auth, or multi-user collaboration in the prototype.
+- Do not commit field definitions, tag-field suggestions, templates, items, primary-photo selections, or duplicate-resolution changes directly from agent output. Create a proposal first; commit only through an explicit confirmation path.
+- Keep the web UI Remy-centered with a visible natural-language composer and dynamic typed results alongside visual browsing. Do not make a spreadsheet clone or a serial chat transcript the primary output.
+- Keep a shared, deliberately expanded field vocabulary and item-specific values in JSONB. Tags suggest approved fields; templates copy starting fields, defaults, and tags only at creation. Items have no ongoing template membership. Title, location, and quantity are optional fields, not mandatory core properties. Links are lists of named references.
+- Support item photo capture/uploads with S3 originals and generated thumbnails. Do not introduce arbitrary file uploads, RAG, embeddings, vector search, full auth, or multi-user collaboration in this iteration.
 - Documentation should explain setup, configuration, and usage. Avoid documenting internal details that are obvious from code.
 
 ## Open Questions
 
-- Should categories eventually support subcategories?
+- How should tag aliases, related tags, and item relationships be reviewed?
 - What access-control model should replace the optional prototype token?
 - How long should agent events and proposal history be retained?
-- How should future image/file assets be exposed once S3-compatible storage is added?
+- How should durable photo drafts and background identification be queued?

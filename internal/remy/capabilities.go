@@ -21,14 +21,17 @@ type SearchResult struct {
 }
 
 func (s *Service) Search(ctx context.Context, query, categoryID, attributeKey, attributeValue string, limit, offset int) (SearchResult, error) {
-	items, total, err := s.store.SearchInventory(ctx, query, categoryID, attributeKey, attributeValue, limit, offset)
+	return s.SearchTagged(ctx, query, categoryID, attributeKey, attributeValue, "", "", limit, offset)
+}
+func (s *Service) SearchTagged(ctx context.Context, query, categoryID, attributeKey, attributeValue, tags, location string, limit, offset int) (SearchResult, error) {
+	items, total, err := s.store.SearchLibrary(ctx, query, categoryID, attributeKey, attributeValue, tags, location, limit, offset)
 	if err != nil {
 		return SearchResult{}, err
 	}
 	categories := []store.Category{}
 	seen := map[string]bool{}
 	for _, item := range items {
-		if !seen[item.CategoryID] {
+		if item.CategoryID != "" && !seen[item.CategoryID] {
 			category, e := s.store.GetCategoryDefinition(ctx, item.CategoryID)
 			if e != nil {
 				return SearchResult{}, e
@@ -83,7 +86,7 @@ func (s *Service) ProposeItemChange(ctx context.Context, payload store.ItemPropo
 	if payload.Operation == "quantity_adjust" && payload.QuantityDelta == 0 {
 		return store.Proposal{}, errors.New("quantity adjustment needs an explicit nonzero quantity_delta")
 	}
-	if payload.Operation == "create" {
+	if payload.Operation == "create" && payload.Title != "" {
 		matches, _, err := s.store.SearchInventory(ctx, payload.Title, payload.CategoryID, "", "", 100, 0)
 		if err != nil {
 			return store.Proposal{}, err
@@ -98,12 +101,6 @@ func (s *Service) ProposeItemChange(ctx context.Context, payload store.ItemPropo
 		if err != nil {
 			return store.Proposal{}, errors.New("identify the exact item before proposing a change")
 		}
-		if item.CategoryID != payload.CategoryID {
-			return store.Proposal{}, errors.New("item does not belong to the supplied category")
-		}
-		if payload.Title == "" {
-			payload.Title = item.Title
-		}
 		if payload.Operation == "update" {
 			old := map[string]any{}
 			next := map[string]any{}
@@ -117,6 +114,9 @@ func (s *Service) ProposeItemChange(ctx context.Context, payload store.ItemPropo
 			}
 			for key, value := range next {
 				old[key] = value
+			}
+			for _, key := range payload.RemoveFields {
+				delete(old, key)
 			}
 			payload.Attributes, _ = json.Marshal(old)
 			if payload.Quantity == 0 {

@@ -22,7 +22,7 @@ let conversationID = getConversationID();
 let requestGeneration = 0;
 
 showConfigurationStatus();
-refreshPendingProposals().catch(() => {});
+refreshPendingProposals(false).catch(() => {});
 
 closeImageModal.addEventListener("click", () => imageModal.close());
 imageModal.addEventListener("click", (event) => {
@@ -53,13 +53,13 @@ newChat.addEventListener("click", () => {
   conversationID = makeUUID();
   try { localStorage.setItem("remventory-conversation", conversationID); } catch (_) {}
   renderEmpty();
-  setDialog({ icon: "ready", message: "Hi, I'm Remy. How can I help you manage your inventory." });
+  setDialog({ icon: "ready", message: "What would you like to do?" });
   setRemyImage("ready");
   input.value = "";
   input.focus();
 });
 
-browseInventory.addEventListener("click", () => showBrowseCategories());
+browseInventory.addEventListener("click", () => showLibrary());
 
 stopRequest.addEventListener("click", () => {
   if (!activeController) return;
@@ -122,11 +122,11 @@ async function showConfigurationStatus() {
   try {
     const status = await api("/api/config");
     const missing = [];
-    if (!status.config?.model_configured) missing.push("Remy needs OPENAI_MAIN_MODEL");
-    if (!status.config?.image_storage_configured) missing.push("picture uploads need the S3-compatible storage settings");
+    if (!status.config?.model_configured) missing.push("Remy’s AI assistance needs setup");
+    if (!status.config?.image_storage_configured) missing.push("photo storage needs setup");
     if (missing.length) {
       configurationWarning.hidden = false;
-      configurationWarning.textContent = `${missing.join("; ")} before all features are available.`;
+      configurationWarning.textContent = `${missing.join("; ")}; manual cataloging and browsing are available.`;
     }
   } catch (_) {
     // Submission errors remain close to the request surface.
@@ -134,6 +134,7 @@ async function showConfigurationStatus() {
 }
 
 function renderResponse(response) {
+  if (typeof libraryGeneration !== "undefined") ++libraryGeneration;
   currentResponse = response;
   stage.innerHTML = "";
   if (response.summary) {
@@ -145,7 +146,7 @@ function renderResponse(response) {
   const present = new Set(visible.map((component) => component?.data?.id).filter(Boolean));
   for (const proposal of pendingProposals) {
     if (present.has(proposal.id)) continue;
-    visible.push({ type: proposal.type === "category_create" ? "category_proposal" : "item_proposal", data: proposal });
+    visible.push({ type: proposal.type === "graph_change" ? "graph_proposal" : proposal.type === "category_create" ? "category_proposal" : "item_proposal", data: proposal });
   }
   for (const component of visible) {
     if (component.type === "text" || component.type === "clarification") {
@@ -174,7 +175,9 @@ async function refreshPendingProposals(rerender = true) {
 
 function renderComponent(component) {
   switch (component.type) {
-    case "category_proposal": return proposalCard(component.data, "Category change");
+    case "graph_proposal": return proposalCard(component.data, "Vocabulary change");
+    case "graph_vocabulary": return vocabularyCard(component.data);
+    case "category_proposal": return proposalCard(component.data, "Template change");
     case "item_proposal": return proposalCard(component.data, "Item change");
     case "item_detail": return itemDetail(component.data);
     case "category_definition": return categoryDefinition(component.data);
@@ -198,13 +201,22 @@ function proposalCard(proposal, title) {
   card.innerHTML = `<div class="card-heading"><div><p class="eyebrow">Confirmation required</p><h2>${escapeHTML(title)}</h2></div><span class="badge">${escapeHTML(operationLabel(operation))}</span></div>`;
 
   if (operation === "delete") {
-    card.insertAdjacentHTML("beforeend", `<p class="callout danger-callout">${title === "Category change" ? "This will also remove all items in the category." : "This item will be permanently removed when approved."}</p>`);
+    card.insertAdjacentHTML("beforeend", `<p class="callout danger-callout">${title === "Template change" ? "Items will keep their details and tags without this field template." : "This item will be permanently removed when approved."}</p>`);
   }
   const details = document.createElement("dl");
   details.className = "details";
-  appendDetail(details, title === "Category change" ? "Category" : "Item", payload.name || payload.title);
+  appendDetail(details, title === "Template change" ? "Template" : "Item", payload.name || payload.title);
   appendDetail(details, "Description", payload.description);
-  appendDetail(details, "Quantity", payload.quantity);
+  appendDetail(details, "Tags", (payload.tags || []).join(", "));
+    appendDetail(details, "Field key", payload.key);
+  appendDetail(details, "Label", payload.label);
+  appendDetail(details, "Value type", payload.data_type);
+  appendDetail(details, "Tag", payload.tag);
+  appendDetail(details, "Suggested fields", (payload.field_keys || []).join(", "));
+  appendDetail(details, "Default tags", (payload.default_tags || []).join(", "));
+  if (payload.default_values) card.append(attributeValueTable(payload.default_values,"Starting values"));
+  if (payload.primary_image_id) { const preview = document.createElement("img"); preview.className="proposal-picture"; preview.src=`/api/images/${encodeURIComponent(payload.primary_image_id)}/thumbnail`; preview.alt="Proposed primary picture"; card.append(preview); }
+
   appendDetail(details, "Quantity change", payload.quantity_delta ? signed(payload.quantity_delta) : "");
   card.append(details);
 
@@ -245,12 +257,12 @@ async function decide(id, approve) {
       body: JSON.stringify({ approve, reason: "" }),
       signal: activeController.signal,
     });
-    let components = [{ type: proposal.type === "category_create" ? "category_proposal" : "item_proposal", data: proposal }];
+    let components = [{ type: proposal.type === "graph_change" ? "graph_proposal" : proposal.type === "category_create" ? "category_proposal" : "item_proposal", data: proposal }];
     const payload = proposal.proposed_payload || {};
     if (approve && proposal.type === "item_change" && payload.operation !== "delete" && payload.item_id) {
       const [item, category] = await Promise.all([
         api(`/api/items/${payload.item_id}`, { signal: activeController.signal }),
-        api(`/api/categories/${payload.category_id}`, { signal: activeController.signal }),
+        payload.category_id ? api(`/api/categories/${payload.category_id}`, { signal: activeController.signal }) : Promise.resolve({}),
       ]);
       components = [{ type: "item_detail", data: { item, category } }];
     }
@@ -318,7 +330,7 @@ function renderError(error) {
   const title = document.createElement("h2"); title.textContent = "I couldn’t finish that request";
   const detail = document.createElement("p"); detail.textContent = error?.message || "Please try again.";
   card.append(title, detail); stage.replaceChildren(card);
-  for(const proposal of pendingProposals) stage.append(proposalCard(proposal,proposal.type==="category_create"?"Category change":"Item change"));
+  for(const proposal of pendingProposals) stage.append(proposalCard(proposal,proposal.type==="graph_change"?"Vocabulary change":proposal.type==="category_create"?"Template change":"Item change"));
   setDialog({icon:"error",message:"I couldn’t confirm how that request finished. Refresh proposals or check the inventory before retrying."});
 }
 
@@ -357,9 +369,12 @@ function currentFocusIDs() {
 function categoryDefinition(category) {
   const card = document.createElement("article");
   card.className = "card";
-  card.innerHTML = `<div class="card-heading"><div><p class="eyebrow">Category definition</p><h2>${escapeHTML(category.name || "Category")}</h2></div></div>`;
+  card.innerHTML = `<div class="card-heading"><div><h2>${escapeHTML(category.name || "Template")}</h2></div></div>`;
   if (category.description) card.insertAdjacentHTML("beforeend", `<p class="summary">${escapeHTML(category.description)}</p>`);
-  card.append(attributeDefinitionTable(category.attributes || [], "Attributes"));
+  card.append(attributeDefinitionTable(category.attributes || [], "Starting fields"));
+  if (category.default_values) card.append(attributeValueTable(category.default_values,"Default values"));
+  if (category.default_tags?.length) card.append(textCard("Default tags: "+category.default_tags.join(", ")));
+  card.append(button("Create an item from this template",()=>openCatalog(null,category)));
   return card;
 }
 
@@ -368,7 +383,7 @@ function queryResult(data) {
   card.className = "card";
   const categories = (data.categories || []).length ? data.categories : (data.category?.id ? [data.category] : []);
   const heading = categories.length > 1 ? `Across ${categories.length} collections` : (categories[0]?.name || "Inventory");
-  card.innerHTML = `<div class="card-heading"><div><p class="eyebrow">Inventory check</p><h2>${escapeHTML(heading)}</h2></div></div><p class="summary">${escapeHTML(data.summary || "")}</p>`;
+  card.innerHTML = `<div class="card-heading"><div><h2>${escapeHTML(heading)}</h2></div></div><p class="summary">${escapeHTML(data.summary || "")}</p>`;
   const matches = data.matches || [];
   if (matches.length && categories.length > 1) {
     for (const category of categories) {
@@ -384,11 +399,11 @@ function queryResult(data) {
 function itemList(data) {
   const card = document.createElement("article");
   card.className = "card";
-  card.innerHTML = `<div class="card-heading"><div><p class="eyebrow">Inventory</p><h2>${escapeHTML(data.category?.name || "Items")}</h2></div></div>`;
+  card.innerHTML = `<div class="card-heading"><div><h2>${escapeHTML(data.category?.name || "Items")}</h2></div></div>`;
   const items = data.items || [];
   if (!items.length) card.insertAdjacentHTML("beforeend", `<p class="summary">No items yet.</p>`);
   else card.append(itemsTable(items, data.category || {}, "Items"));
-  if (data.has_more) { const more=document.createElement("button"); more.type="button"; more.className="secondary"; more.textContent="Load more"; more.addEventListener("click",()=>showCategoryItems(data.category,data.offset||items.length,true)); card.append(more); }
+  if (data.has_more) { const more=document.createElement("button"); more.type="button"; more.className="secondary"; more.textContent="Load more"; more.addEventListener("click",()=>showSearchItems(data)); card.append(more); }
   return card;
 }
 
@@ -405,7 +420,7 @@ function itemDetail(data) {
   const category = data.category || {};
   const card = document.createElement("article");
   card.className = "card item-detail-card";
-  card.innerHTML = `<div class="card-heading"><div><p class="eyebrow">${escapeHTML(category.name || "Inventory item")}</p><h2>${escapeHTML(item.title || "Item")}</h2></div><span class="badge">Quantity ${escapeHTML(String(item.quantity || 1))}</span></div>`;
+  card.innerHTML = `<div class="card-heading"><div><h2>${escapeHTML(item.title || "Item")}</h2></div></div>`;
 
   const layout = document.createElement("div");
   layout.className = "item-detail-layout";
@@ -416,12 +431,14 @@ function itemDetail(data) {
   information.innerHTML = "<h3>Item details</h3>";
   const fields = document.createElement("dl");
   fields.className = "item-fields";
-  appendDetail(fields, "Quantity", item.quantity);
+
   const values = item.attributes || {};
-  for (const attribute of category.attributes || []) {
-    appendDetail(fields, attribute.label || prettyKey(attribute.key), formatValue(values[attribute.key]));
-  }
+  const labels = Object.fromEntries((category.attributes || []).map(attribute => [attribute.key, attribute.label]));
+  for (const [key, value] of Object.entries(values)) appendAttributeDetail(fields, key, value);
+  appendDetail(fields, "Tags", (item.tags || []).join(", "));
+
   information.append(fields);
+  const edit = document.createElement("button"); edit.className = "secondary"; edit.textContent = "Edit details"; edit.onclick = () => openCatalog(item); information.append(edit);
   layout.append(information);
   card.append(layout);
   return card;
@@ -440,13 +457,13 @@ function categoryList(categories) {
   if (!Array.isArray(categories)) categories = categories?.categories || [];
   const card = document.createElement("article");
   card.className = "card";
-  card.innerHTML = `<h2>Categories</h2>`;
+  card.innerHTML = `<h2>Creation templates</h2>`;
   const list = document.createElement("ul");
   list.className = "category-list";
   for (const category of categories || []) {
     const li = document.createElement("li");
     const button=document.createElement("button");button.type="button";button.className="category-browse-button";button.textContent=category.name;
-    button.addEventListener("click",()=>showCategoryItems(category));
+    button.addEventListener("click",()=>openCatalog(null,category));
     const detail=document.createElement("span");detail.textContent=`${(category.attributes||[]).length} attributes`;
     li.append(button,detail);
     list.append(li);
@@ -465,15 +482,15 @@ async function showBrowseCategories() {
   } catch(error) {renderError(error);}
 }
 
-async function showCategoryItems(category,offset=0,append=false) {
-  if(activeController)return;
+async function showSearchItems(data) {
+  if (activeController) return;
   const generation=++requestGeneration;
   try {
-    const response=await api(`/api/items?category_id=${encodeURIComponent(category.id)}&limit=50&offset=${offset}`);
-    if(generation!==requestGeneration)return;
-    const previous=(currentResponse?.components||[]).find(c=>c.type==="item_list")?.data?.items||[];
-    const items=append?[...previous,...(response.items||[])]:response.items||[];
-    renderResponse({state:"completed",summary:`${category.name}: ${items.length} items shown.`,components:[{type:"item_list",data:{category,items,offset:offset+(response.items||[]).length,has_more:(response.items||[]).length===50}}]});
+    const offset=(data.offset||0)+(data.items||[]).length;
+    const params=new URLSearchParams({...data.filters,limit:String(data.limit||50),offset:String(offset)});
+    const result=await api(`/api/items?${params}`);if(generation!==requestGeneration)return;
+    const items=[...(data.items||[]),...(result.items||[])];
+    renderResponse({summary:`${result.total} matching items.`,components:[{type:"item_list",data:{...data,items,has_more:(data.offset||0)+items.length<result.total}}]});
   } catch(error) {renderError(error);}
 }
 
@@ -538,7 +555,7 @@ function itemsTable(items, category, title) {
   const attributes = category.attributes || [];
   const table = document.createElement("table");
   const head = document.createElement("thead");
-  head.innerHTML = `<tr><th>Picture</th><th>Item</th><th>Quantity</th>${attributes.map((attribute) => `<th>${escapeHTML(attribute.label || prettyKey(attribute.key))}</th>`).join("")}</tr>`;
+  head.innerHTML = `<tr><th>Picture</th><th>Item</th>${attributes.map((attribute) => `<th>${escapeHTML(attribute.label || prettyKey(attribute.key))}</th>`).join("")}</tr>`;
   const body = document.createElement("tbody");
   for (const item of items) {
     const values = item.attributes || {};
@@ -552,7 +569,7 @@ function itemsTable(items, category, title) {
     titleButton.addEventListener("click", () => openItemDetail(item, category));
     titleCell.append(titleButton);
     row.append(titleCell);
-    row.insertAdjacentHTML("beforeend", `<td>${escapeHTML(String(item.quantity))}</td>${attributes.map((attribute) => `<td>${escapeHTML(formatValue(values[attribute.key]))}</td>`).join("")}`);
+    row.insertAdjacentHTML("beforeend", `${attributes.map((attribute) => `<td>${escapeHTML(formatValue(values[attribute.key]))}</td>`).join("")}`);
     body.append(row);
   }
   table.append(head, body);
@@ -590,7 +607,7 @@ function itemPictureCell(item, category) {
 function itemPicturePanel(item) {
   const section = document.createElement("section");
   section.className = "item-picture-panel";
-  section.innerHTML = "<h3>Picture</h3>";
+  section.innerHTML = "<h3>Pictures</h3>";
   const picture = (item.images || [])[0];
   if (picture) {
     const button = document.createElement("button");
@@ -598,10 +615,15 @@ function itemPicturePanel(item) {
     button.className = "item-picture-button";
     const thumbnailURL = picture.thumbnail_url || `/api/images/${picture.id}/thumbnail`;
     const originalURL = picture.original_url || `/api/images/${picture.id}/original`;
-    button.innerHTML = `<img src="${escapeHTML(thumbnailURL)}" alt="Picture of ${escapeHTML(item.title)}"><span>View full size</span>`;
+    button.innerHTML = `<img src="${escapeHTML(thumbnailURL)}" alt="Picture of ${escapeHTML(item.title)}"><span>★ Primary picture · View full size</span>`;
     button.addEventListener("click", () => showItemImage(item.title, originalURL));
     section.append(button);
-    return section;
+    for (const extra of (item.images || []).slice(1)) {
+      const thumbnail = document.createElement("button"); thumbnail.type = "button"; thumbnail.className = "thumbnail-button";
+      thumbnail.innerHTML = `<img src="/api/images/${escapeHTML(extra.id)}/thumbnail" alt="Another picture of ${escapeHTML(item.title)}">`;
+      thumbnail.onclick = () => showItemImage(item.title, `/api/images/${extra.id}/original`); section.append(thumbnail);
+      const primary = document.createElement("button"); primary.type="button";primary.className="secondary";primary.textContent="Use as primary";primary.onclick=()=>proposePrimaryPicture(item,extra.id);section.append(primary);
+    }
   }
 
   const input = document.createElement("input");
@@ -664,7 +686,7 @@ async function uploadItemPicture(item, file, section, dropZone) {
     const body = new FormData();
     body.append("image", file);
     const image = await api(`/api/items/${item.id}/images`, { method: "POST", body });
-    item.images = [image];
+    item.images = [...(item.images || []), image];
     section.replaceWith(itemPicturePanel(item));
     setDialog({ icon: "celebrating", message: `The picture for ${item.title} is uploaded and ready to view.` });
   } catch (error) {
@@ -692,7 +714,9 @@ function appendDetail(list, label, value) {
   const term = document.createElement("dt");
   term.textContent = label;
   const detail = document.createElement("dd");
-  detail.textContent = String(value);
+  const raw = String(value);
+  if (/^https?:\/\//i.test(raw)) { const link = document.createElement("a"); link.href = raw; link.textContent = raw; link.target = "_blank"; link.rel = "noopener noreferrer"; detail.append(link); }
+  else detail.textContent = raw;
   list.append(term, detail);
 }
 
@@ -715,7 +739,7 @@ function setWorking(message) {
 
 function setDialog(response) {
   const icon = ["ready", "thinking", "searching", "cataloging", "celebrating", "error"].includes(response.icon) ? response.icon : "ready";
-  dialog.textContent = truncateDialog(response.message || "Hi, I'm Remy. How can I help you manage your inventory.");
+  dialog.textContent = truncateDialog(response.message || "What would you like to do?");
   setRemyImage(icon);
 }
 
@@ -724,9 +748,7 @@ function truncateDialog(message) {
   return characters.length <= 140 ? characters.join("") : `${characters.slice(0, 139).join("").trim()}…`;
 }
 
-function renderEmpty() {
-  stage.innerHTML = `<div class="empty"><h2>Your inventory workspace</h2><p>Inventory details, search results, and proposals will appear here.</p></div>`;
-}
+function renderEmpty() { showLibrary(); }
 
 function clearWorking() {
   activeController = null;

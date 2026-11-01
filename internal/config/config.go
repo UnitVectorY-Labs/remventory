@@ -12,6 +12,9 @@ type Config struct {
 	DatabaseURL     string
 	OpenAIBaseURL   string
 	OpenAIAPIKey    string
+	VisionModel     string
+	VisionBaseURL   string
+	VisionAPIKey    string
 	TinyModel       string
 	MainModel       string
 	ThinkingModel   string
@@ -33,6 +36,9 @@ func Load() Config {
 		DatabaseURL:     env("DATABASE_URL", ""),
 		OpenAIBaseURL:   env("OPENAI_BASE_URL", "http://localhost:11434/v1"),
 		OpenAIAPIKey:    env("OPENAI_API_KEY", ""),
+		VisionModel:     env("OPENAI_VISION_MODEL", ""),
+		VisionBaseURL:   env("OPENAI_VISION_BASE_URL", env("OPENAI_BASE_URL", "http://localhost:11434/v1")),
+		VisionAPIKey:    env("OPENAI_VISION_API_KEY", env("OPENAI_API_KEY", "")),
 		TinyModel:       env("OPENAI_TINY_MODEL", ""),
 		MainModel:       env("OPENAI_MAIN_MODEL", env("OPENAI_MODEL", "")),
 		ThinkingModel:   env("OPENAI_THINKING_MODEL", env("OPENAI_MODEL", "")),
@@ -57,6 +63,7 @@ func (c Config) PublicStatus() map[string]any {
 	return map[string]any{
 		"http_addr":                 c.HTTPAddr,
 		"database_configured":       c.DatabaseURL != "",
+		"vision_model_configured":   c.VisionModel != "",
 		"model_configured":          c.MainModel != "",
 		"tiny_model_configured":     c.TinyModel != "",
 		"main_model_configured":     c.MainModel != "",

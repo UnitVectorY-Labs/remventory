@@ -173,3 +173,23 @@ func StorePrepared(ctx context.Context, objects ObjectStore, prepared Prepared) 
 	}
 	return nil
 }
+
+// AnalysisImage keeps the entire frame while bounding model input size.
+func AnalysisImage(original []byte) ([]byte, error) {
+	source, _, err := image.Decode(bytes.NewReader(original))
+	if err != nil {
+		return nil, err
+	}
+	bounds := source.Bounds()
+	width, height := bounds.Dx(), bounds.Dy()
+	if width > 1600 || height > 1600 {
+		ratio := 1600.0 / float64(max(width, height))
+		width = max(1, int(float64(width)*ratio))
+		height = max(1, int(float64(height)*ratio))
+	}
+	resized := image.NewRGBA(image.Rect(0, 0, width, height))
+	draw.CatmullRom.Scale(resized, resized.Bounds(), source, bounds, draw.Src, nil)
+	var output bytes.Buffer
+	err = jpeg.Encode(&output, resized, &jpeg.Options{Quality: 85})
+	return output.Bytes(), err
+}

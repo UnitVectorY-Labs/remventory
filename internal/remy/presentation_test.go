@@ -72,3 +72,31 @@ func TestComponentReferencesCaptureComparisonItemIDs(t *testing.T) {
 		}
 	}
 }
+
+func TestAgentUsesSharedVocabularyAndOptionalItemFields(t *testing.T) {
+	definitions := (&Service{}).agentToolDefinitions()
+	foundVocabulary, foundGraph, foundItem := false, false, false
+	for _, definition := range definitions {
+		function := definition["function"].(map[string]any)
+		switch function["name"] {
+		case "get_inventory_vocabulary":
+			foundVocabulary = true
+		case "propose_graph_change":
+			foundGraph = true
+		case "propose_item_change":
+			foundItem = true
+			properties := function["parameters"].(map[string]any)["properties"].(map[string]any)
+			for _, core := range []string{"title", "location", "quantity"} {
+				if _, present := properties[core]; present {
+					t.Fatalf("%s must be an optional registered field, not a privileged agent parameter", core)
+				}
+			}
+			if properties["primary_image_id"] == nil || properties["remove_fields"] == nil {
+				t.Fatal("agent cannot maintain primary photo or remove fields")
+			}
+		}
+	}
+	if !foundVocabulary || !foundGraph || !foundItem {
+		t.Fatal("agent is missing graph capabilities")
+	}
+}

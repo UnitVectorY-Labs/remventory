@@ -1,9 +1,11 @@
 package httpapi
 
 import (
+	"crypto/sha256"
 	"embed"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"io/fs"
 	"log/slog"
@@ -49,12 +51,16 @@ func New(opts Options) http.Handler {
 		mux.Handle("/mcp", opts.MCPHandler)
 		mux.Handle("/mcp/", opts.MCPHandler)
 	}
+	mux.HandleFunc("GET /api/vocabulary", api.withToken(api.vocabulary))
+	mux.HandleFunc("POST /api/proposals/graph", api.withToken(api.proposeGraph))
+	mux.HandleFunc("GET /api/library", api.withToken(api.libraryFacets))
 	mux.HandleFunc("GET /api/config", api.withToken(api.configStatus))
 	mux.HandleFunc("POST /api/remy/request", api.withToken(api.remyRequest))
 	mux.HandleFunc("POST /api/remy/dialog", api.withToken(api.remyDialog))
 	mux.HandleFunc("POST /api/query_inventory", api.withToken(api.queryInventory))
 	mux.HandleFunc("GET /api/categories", api.withToken(api.listCategories))
 	mux.HandleFunc("GET /api/categories/{id}", api.withToken(api.getCategory))
+	mux.HandleFunc("POST /api/photos/identify", api.withToken(api.identifyPhoto))
 	mux.HandleFunc("GET /api/items", api.withToken(api.listItems))
 	mux.HandleFunc("GET /api/items/{id}", api.withToken(api.getItem))
 	mux.HandleFunc("POST /api/items/{id}/images", api.withToken(api.uploadItemImage))
@@ -250,14 +256,9 @@ func (a api) listItems(w http.ResponseWriter, r *http.Request) {
 	}
 
 	categoryID := r.URL.Query().Get("category_id")
-	if categoryID == "" {
-		writeError(w, http.StatusBadRequest, "category_id is required")
-		return
-	}
-
 	limit := queryInt(r, "limit", 50)
 	offset := queryInt(r, "offset", 0)
-	items, err := a.store.ListItems(r.Context(), categoryID, limit, offset)
+	items, total, err := a.store.SearchLibrary(r.Context(), r.URL.Query().Get("q"), categoryID, r.URL.Query().Get("attribute_key"), r.URL.Query().Get("attribute_value"), r.URL.Query().Get("tag"), r.URL.Query().Get("location"), limit, offset)
 	if err != nil {
 		a.logger.Error("list items", "error", err)
 		writeError(w, http.StatusInternalServerError, "list items")
@@ -269,6 +270,7 @@ func (a api) listItems(w http.ResponseWriter, r *http.Request) {
 
 	writeJSON(w, http.StatusOK, map[string]any{
 		"items":       items,
+		"total":       total,
 		"category_id": categoryID,
 		"limit":       limit,
 		"offset":      offset,
@@ -309,10 +311,6 @@ func (a api) uploadItemImage(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "get item")
 		return
 	}
-	if len(item.Images) > 0 {
-		writeError(w, http.StatusConflict, "this item already has a picture")
-		return
-	}
 	r.Body = http.MaxBytesReader(w, r.Body, itemimages.MaxUploadBytes+(1<<20))
 	file, header, err := r.FormFile("image")
 	if err != nil {
@@ -320,6 +318,9 @@ func (a api) uploadItemImage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer file.Close()
+	if r.MultipartForm != nil {
+		defer r.MultipartForm.RemoveAll()
+	}
 	prepared, err := itemimages.Prepare(file, header)
 	if err != nil {
 		status := http.StatusBadRequest
@@ -327,6 +328,16 @@ func (a api) uploadItemImage(w http.ResponseWriter, r *http.Request) {
 			status = http.StatusRequestEntityTooLarge
 		}
 		writeError(w, status, err.Error())
+		return
+	}
+	checksum := fmt.Sprintf("%x", sha256.Sum256(prepared.Original))
+	if existing, err := a.store.ItemImageByChecksum(r.Context(), item.ID, checksum); err == nil {
+		images := []store.ItemImage{existing}
+		setImageURLs(images)
+		writeJSON(w, http.StatusOK, images[0])
+		return
+	} else if !errors.Is(err, store.ErrNotFound) {
+		writeError(w, http.StatusInternalServerError, "check existing picture")
 		return
 	}
 	if err := itemimages.StorePrepared(r.Context(), a.images, prepared); err != nil {
@@ -338,10 +349,16 @@ func (a api) uploadItemImage(w http.ResponseWriter, r *http.Request) {
 		ID: prepared.ID, ItemID: item.ID, OriginalKey: prepared.OriginalKey, ThumbnailKey: prepared.ThumbnailKey,
 		MIMEType: prepared.MIMEType, OriginalFilename: prepared.OriginalFilename,
 		Width: prepared.Width, Height: prepared.Height, SizeBytes: int64(len(prepared.Original)),
-	})
+	}, checksum)
 	if err != nil {
 		_ = a.images.Delete(r.Context(), prepared.OriginalKey)
 		_ = a.images.Delete(r.Context(), prepared.ThumbnailKey)
+		if existing, lookupErr := a.store.ItemImageByChecksum(r.Context(), item.ID, checksum); lookupErr == nil {
+			images := []store.ItemImage{existing}
+			setImageURLs(images)
+			writeJSON(w, http.StatusOK, images[0])
+			return
+		}
 		a.logger.Error("save item image", "error", err)
 		writeError(w, http.StatusInternalServerError, "save image")
 		return

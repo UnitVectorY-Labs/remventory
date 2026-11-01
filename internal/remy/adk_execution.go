@@ -81,7 +81,12 @@ func (s *Service) handleAgent(ctx context.Context, req Request, message string) 
 	if err != nil {
 		return Response{}, err
 	}
+	vocabulary, err := s.store.Vocabulary(ctx)
+	if err != nil {
+		return Response{}, err
+	}
 	var prompt strings.Builder
+	prompt.WriteString("Approved shared vocabulary, tag suggestions, and creation templates: " + mustJSON(vocabulary) + "\n")
 	prompt.WriteString(remyAgentInstructions + "\nCurrent pending proposals: " + mustJSON(pending) + "\nCurrent browser focus (hydrated from canonical IDs): " + mustJSON(focus) + "\nBounded recent conversation:\n")
 	for _, turn := range history {
 		fmt.Fprintf(&prompt, "%s: %s\n", turn.Role, turn.Content)

@@ -1,0 +1,50 @@
+const { JSDOM } = require('jsdom');
+const { readFileSync } = require('node:fs');
+const vm = require('node:vm');
+const assert = require('node:assert/strict');
+const { resolve } = require('node:path');
+const base = resolve(__dirname, '../internal/httpapi/static') + '/';
+const dom = new JSDOM(readFileSync(base+'index.html','utf8'), {url:'http://test.local',runScripts:'outside-only'});
+const w = dom.window;
+w.HTMLDialogElement.prototype.showModal = function(){this.open=true};
+w.HTMLDialogElement.prototype.close = function(){this.open=false;this.onclose?.()};
+w.URL.createObjectURL = file => 'blob:'+file.name; w.URL.revokeObjectURL = ()=>{};
+const vocabulary = {fields:[{key:'title',label:'Title',data_type:'text'},{key:'year',label:'Year',data_type:'number'},{key:'links',label:'Links',data_type:'links'},{key:'description',label:'Description',data_type:'text'}],tag_fields:{Games:['title','year','links']},templates:[{id:'template-1',name:'Wii games',default_tags:['Games','Wii'],default_values:{year:2006},attributes:[{key:'title'},{key:'year'},{key:'links'}]}]};
+let sequence=0,photoSequence=0;
+const proposals = new Map(); const mutations=[];
+w.fetch=async(path,options={})=>{
+ let data={};
+ if(path==='/api/config')data={config:{model_configured:true,image_storage_configured:true}};
+ else if(path==='/api/vocabulary')data=vocabulary;
+ else if(path==='/api/library')data={total:0,tags:[],types:{},locations:[]};
+ else if(path.startsWith('/api/items?'))data={total:0,items:[]};
+ else if(path.startsWith('/api/proposals?'))data={proposals:[]};
+ else if(path==='/api/proposals/item') {const payload=JSON.parse(options.body);mutations.push(payload);const id='proposal-'+(++sequence);data={id,status:'pending',proposed_payload:payload};proposals.set(id,data)}
+ else if(path.startsWith('/api/proposals/')) {const parts=path.split('/');data=proposals.get(parts[3]);if(parts[4]==='decision'){data.status='approved';data.proposed_payload.item_id='saved-item'}}
+ else if(path==='/api/items/saved-item/images') data={id:'photo-'+(++photoSequence)};
+ else throw Error('Unexpected path '+path);
+ return {ok:true,json:async()=>data};
+};
+for(const file of ['app.js','library.js'])new vm.Script(readFileSync(base+file,'utf8')).runInContext(dom.getInternalVMContext());
+(async()=>{
+ await new Promise(resolve=>setTimeout(resolve,10));
+ assert.equal(w.document.querySelector('#remy-controls').hidden,false,'Remy composer must be visible');
+ await vm.runInContext('openCatalog(null,graphVocabulary.templates[0])',dom.getInternalVMContext());
+ const modal=w.document.querySelector('#catalog-modal');
+ assert(!modal.textContent.includes('What is it called?'));assert(!modal.textContent.includes('Where does it live?'));assert(!modal.textContent.includes('How many copies?'));
+ assert.equal(modal.querySelector('[aria-label="Year"]').value,'2006');
+ assert.equal(modal.querySelector('input[placeholder="Consoles, Wii, Nintendo"]').value,'Games, Wii');
+ modal.querySelector('[aria-label="Remove Title"]').click();
+ const linkButton=[...modal.querySelectorAll('button')].find(button=>button.textContent==='＋ Add a link');linkButton.click();
+ modal.querySelector('[aria-label="Link name"]').value='Wikipedia';modal.querySelector('[aria-label="Link URL"]').value='https://en.wikipedia.org/wiki/Wii';
+ const fileInput=modal.querySelector('input[multiple]');Object.defineProperty(fileInput,'files',{value:[new w.File(['a'],'front.png',{type:'image/png'}),new w.File(['b'],'back.png',{type:'image/png'})]});fileInput.onchange();
+ const primaryButtons=[...modal.querySelectorAll('.primary-choice')];assert.equal(primaryButtons.length,2);primaryButtons[1].click();
+ const form=modal.querySelector('form');await form.onsubmit({preventDefault(){}});assert(modal.textContent.includes('back.png (primary)'));
+ await form.onsubmit({preventDefault(){}});
+ assert.equal(mutations.length,2,'record and primary-image proposal');
+ assert.equal(mutations[0].attributes.title,undefined,'no synthetic title field');assert.equal(mutations[0].category_id,undefined,'no template ownership');assert.equal(mutations[0].quantity,undefined);assert.equal(mutations[0].location,undefined);assert.equal(mutations[0].title,undefined);
+ assert.equal(mutations[0].attributes.year,2006);assert.equal(mutations[0].attributes.links[0].name,'Wikipedia');assert.deepEqual(mutations[0].tags,['Games','Wii']);
+ assert.equal(photoSequence,2);assert.equal(mutations[1].primary_image_id,'photo-2');assert.equal(modal.open,false);
+ console.log('PASS: visible Remy, registered fields, template defaults, optional title, named link list, multiple photos, approved primary selection');
+ dom.window.close();
+})().catch(error=>{console.error(error);process.exitCode=1;dom.window.close()});

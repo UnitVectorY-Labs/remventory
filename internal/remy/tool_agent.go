@@ -10,7 +10,7 @@ import (
 	"github.com/UnitVectorY-Labs/remventory/internal/store"
 )
 
-const remyAgentInstructions = `You are Remy, a playful, capable inventory assistant. Answer the person's actual question in natural language and choose useful typed interface components with present_evidence. You can search and aggregate the complete inventory with tools; ask tools for facts rather than guessing. Distinguish records (distinct items) from units (sum of quantity). Use stored item IDs for references and compare only items found by tools. Data changes must be proposed for explicit human approval. Never say a proposal was approved or inventory changed. Use propose_item_change or propose_category_change only when the user clearly requests a change. Ask a concise clarification instead of guessing an ambiguous target or missing quantity delta. Preserve fields on update. You have no approval tool. The browser focus, prior canonical references, and pending proposals below are refreshed from the server and support follow-up pronouns. The presentation library supports text, item_cards, item_list, item_detail, comparison, category_definition, category_list, statistic, grouped_statistic, and proposal cards. The same evidence may be presented in different supported forms; choose based on the request. Use only returned evidence IDs; presentation data is hydrated and validated by the server. Always provide a natural-language answer, even when using components.`
+const remyAgentInstructions = `You are Remy, a playful hamster librarian who enjoys keeping physical belongings organized. Organize with overlapping tags such as Games + Wii and Consoles + Wii. Items have internal IDs, tags, optional registered fields, and multiple photos with a primary image. Title, location, and quantity are optional fields, not mandatory item properties. Use ONLY approved field keys. Links is a list of named {name,url} references. To expand the vocabulary, propose_graph_change and wait for human approval before using new keys. Tags can suggest fields. Categories are creation templates that copy starting fields, default values, and tags once; items have no continuing template membership. Use the provided vocabulary and templates as context. Answer the person's actual question in natural language and choose useful typed interface components with present_evidence. You can search and aggregate the complete inventory with tools; ask tools for facts rather than guessing. Count inventory items as records. Only aggregate quantity when the optional Quantity field exists. Use stored item IDs for references and compare only items found by tools. Data changes must be proposed for explicit human approval. Never say a proposal was approved or inventory changed. Use propose_item_change or propose_category_change only when the user clearly requests a change. Ask a concise clarification instead of guessing an ambiguous target or missing quantity delta. Preserve fields on update. You have no approval tool. The browser focus, prior canonical references, and pending proposals below are refreshed from the server and support follow-up pronouns. The presentation library supports text, item_cards, item_list, item_detail, comparison, category_definition, category_list, statistic, grouped_statistic, and proposal cards. The same evidence may be presented in different supported forms; choose based on the request. Use only returned evidence IDs; presentation data is hydrated and validated by the server. Always provide a natural-language answer, even when using components.`
 
 type evidence struct {
 	Type string `json:"type"`
@@ -26,13 +26,16 @@ func (s *Service) agentToolDefinitions() []map[string]any {
 		return map[string]any{"type": "function", "function": map[string]any{"name": name, "description": description, "parameters": parameters}}
 	}
 	return []map[string]any{
-		fn("list_categories", "List a bounded page of inventory collections and their attribute schemas", obj(map[string]any{"offset": map[string]any{"type": "integer"}, "limit": map[string]any{"type": "integer"}})),
-		fn("search_inventory", "Search inventory with server-side category and attribute filters. Returns exact total, a bounded page, and has_more.", obj(map[string]any{"query": str("Title or item text to search"), "category_id": str("Optional category UUID"), "attribute_key": str("Optional exact attribute key filter"), "attribute_value": str("Optional exact attribute value filter"), "offset": map[string]any{"type": "integer"}, "limit": map[string]any{"type": "integer"}})),
-		fn("aggregate_inventory", "Compute deterministic counts, quantity totals, min/max, or grouped counts from all filtered inventory. metric is records, units, min, max, or group.", obj(map[string]any{"category_id": str("Optional category UUID"), "metric": str("records, units, min, max, or group"), "attribute_key": str("Attribute key for min/max/group"), "group_by": str("Attribute key for grouping"), "filter_key": str("Optional exact filter attribute key"), "filter_value": str("Optional exact filter value")}, "metric")),
+		fn("get_inventory_vocabulary", "Read shared field definitions, tag field suggestions, and creation templates", obj(map[string]any{})),
+		fn("propose_graph_change", "Propose a new shared field definition or a tag's suggested fields; never commits. define_field needs key,label,data_type; suggest_fields needs tag,field_keys.", obj(map[string]any{"operation": str("define_field or suggest_fields"), "key": str("Stable field key"), "label": str("Field label"), "data_type": str("text,number,boolean,date,links,enum"), "config": map[string]any{"type": "object", "additionalProperties": true}, "tag": str("Tag to suggest fields for"), "field_keys": map[string]any{"type": "array", "items": map[string]any{"type": "string"}}}, "operation")),
+		fn("list_categories", "List creation templates with starter fields, default values, and tags; templates do not own inventory", obj(map[string]any{"offset": map[string]any{"type": "integer"}, "limit": map[string]any{"type": "integer"}})),
+		fn("browse_inventory_tags", "List stored tags and exact counts before choosing filters", obj(map[string]any{})),
+		fn("search_inventory", "Search inventory with server-side category and attribute filters. Returns exact total, a bounded page, and has_more.", obj(map[string]any{"tags": str("Comma-separated exact tags, all must match"), "query": str("Title or item text to search"), "attribute_key": str("Optional exact attribute key filter"), "attribute_value": str("Optional exact attribute value filter"), "offset": map[string]any{"type": "integer"}, "limit": map[string]any{"type": "integer"}})),
+		fn("aggregate_inventory", "Compute deterministic counts, quantity totals, min/max, or grouped counts from all filtered inventory. metric is records, units, min, max, or group.", obj(map[string]any{"metric": str("records, units, min, max, or group"), "attribute_key": str("Attribute key for min/max/group"), "group_by": str("Attribute key for grouping"), "filter_key": str("Optional exact filter attribute key"), "filter_value": str("Optional exact filter value")}, "metric")),
 		fn("compare_items", "Load canonical details for two or more exact item IDs", obj(map[string]any{"item_ids": map[string]any{"type": "array", "items": map[string]any{"type": "string"}}}, "item_ids")),
-		fn("get_category_definition", "Load one category schema by UUID", obj(map[string]any{"category_id": str("Category UUID")}, "category_id")),
-		fn("propose_item_change", "Create a pending item proposal. Updates preserve omitted fields. quantity_adjust requires a nonzero explicit delta. This tool never commits.", obj(map[string]any{"operation": str("create, update, delete, or quantity_adjust"), "category_id": str("Category UUID"), "item_id": str("Existing item UUID for update/delete/quantity_adjust"), "title": str("Item title, required for create"), "attributes": map[string]any{"type": "object", "additionalProperties": true}, "quantity": map[string]any{"type": "integer"}, "quantity_delta": map[string]any{"type": "integer"}}, "operation", "category_id")),
-		fn("propose_category_change", "Create a pending category proposal for explicit human review", obj(map[string]any{"operation": str("create, update, delete"), "category_id": str("Existing category UUID"), "name": str("Category name"), "description": str("Category description"), "attributes": map[string]any{"type": "array", "items": map[string]any{"type": "object", "additionalProperties": true}}}, "operation")),
+		fn("get_category_definition", "Load a creation template and its starter fields, defaults, and tags", obj(map[string]any{"category_id": str("Optional creation template UUID, create only")}, "category_id")),
+		fn("propose_item_change", "Create a pending item proposal. Updates preserve omitted fields; remove_fields explicitly removes fields. This tool never commits.", obj(map[string]any{"operation": str("create, update, or delete"), "category_id": str("Optional creation template UUID, create only"), "item_id": str("Existing internal item UUID for update/delete"), "tags": map[string]any{"type": "array", "items": map[string]any{"type": "string"}}, "attributes": map[string]any{"type": "object", "additionalProperties": true}, "primary_image_id": str("Existing photo ID belonging to this item, to propose as primary"), "remove_fields": map[string]any{"type": "array", "items": map[string]any{"type": "string"}}}, "operation")),
+		fn("propose_category_change", "Propose a creation-template change using already approved field keys; never commits", obj(map[string]any{"operation": str("create, update, delete"), "category_id": str("Existing template UUID"), "name": str("Template name"), "description": str("Template description"), "default_tags": map[string]any{"type": "array", "items": map[string]any{"type": "string"}}, "default_values": map[string]any{"type": "object", "additionalProperties": true}, "attributes": map[string]any{"type": "array", "items": map[string]any{"type": "object", "additionalProperties": true}}}, "operation")),
 		fn("revise_pending_proposal", "Revise an existing pending proposal in place after the user explicitly requests a correction. Supply a complete valid payload and preserve all omitted fields.", obj(map[string]any{"proposal_id": str("Pending proposal UUID"), "proposed_payload": map[string]any{"type": "object", "additionalProperties": true}}, "proposal_id", "proposed_payload")),
 		fn("present_evidence", "Choose a typed presentation and evidence ID returned by a prior tool. The same inventory evidence can be shown as cards, a compact list, a detail view, or a comparison. No arbitrary display data is accepted.", obj(map[string]any{"evidence_id": str("Evidence identifier returned by an inventory tool"), "component_type": str("text, item_cards, item_list, item_detail, comparison, category_definition, category_list, statistic, grouped_statistic"), "title": str("Short display title")}, "evidence_id", "component_type")),
 	}
@@ -47,6 +50,28 @@ func (s *Service) executeAgentTool(ctx context.Context, name string, args map[st
 	}
 	str := func(k string) string { v, _ := args[k].(string); return strings.TrimSpace(v) }
 	switch name {
+	case "get_inventory_vocabulary":
+		vocabulary, err := s.store.Vocabulary(ctx)
+		if err != nil {
+			return nil, nil, err
+		}
+		component := Component{Type: "graph_vocabulary", Data: vocabulary}
+		return map[string]any{"vocabulary": vocabulary, "presented": true}, &component, nil
+	case "propose_graph_change":
+		data, err := json.Marshal(args)
+		if err != nil {
+			return nil, nil, err
+		}
+		var payload store.GraphProposalPayload
+		if err := json.Unmarshal(data, &payload); err != nil {
+			return nil, nil, err
+		}
+		proposal, err := s.store.CreateGraphProposal(ctx, payload)
+		if err != nil {
+			return nil, nil, err
+		}
+		component := Component{Type: "graph_proposal", Data: proposal}
+		return map[string]any{"proposal": proposal, "presented": true}, &component, nil
 	case "list_categories":
 		offset, limit := intArg(args, "offset", 0), intArg(args, "limit", 50)
 		if limit < 1 || limit > 100 {
@@ -65,16 +90,19 @@ func (s *Service) executeAgentTool(ctx context.Context, name string, args map[st
 		}
 		id := register("categories", page)
 		return map[string]any{"categories": page, "offset": offset, "limit": limit, "has_more": hasMore, "evidence_id": id}, nil, nil
+	case "browse_inventory_tags":
+		result, err := s.store.LibraryFacets(ctx)
+		return result, nil, err
 	case "search_inventory":
 		categoryID := str("category_id")
 		query := str("query")
 		key, value := str("attribute_key"), str("attribute_value")
 		offset, limit := intArg(args, "offset", 0), intArg(args, "limit", 50)
-		search, err := s.Search(ctx, query, categoryID, key, value, limit, offset)
+		search, err := s.SearchTagged(ctx, query, categoryID, key, value, str("tags"), str("location"), limit, offset)
 		if err != nil {
 			return nil, nil, err
 		}
-		data := map[string]any{"judgment": "matches", "summary": fmt.Sprintf("Found %d matching records.", search.Total), "categories": search.Categories, "matches": search.Items, "total_records": search.Total, "offset": search.Offset, "limit": search.Limit, "has_more": search.HasMore}
+		data := map[string]any{"judgment": "matches", "summary": fmt.Sprintf("Found %d matching records.", search.Total), "categories": search.Categories, "matches": search.Items, "total_records": search.Total, "offset": search.Offset, "limit": search.Limit, "has_more": search.HasMore, "filters": map[string]string{"q": query, "tag": str("tags"), "attribute_key": key, "attribute_value": value}}
 		id := register("query_result", data)
 		return map[string]any{"total_records": search.Total, "offset": search.Offset, "limit": search.Limit, "has_more": search.HasMore, "items": search.Items, "categories": search.Categories, "evidence_id": id}, nil, nil
 	case "aggregate_inventory":
@@ -152,7 +180,29 @@ func (s *Service) executeAgentTool(ctx context.Context, name string, args map[st
 				}
 			}
 		}
-		p, err := s.ProposeItemChange(ctx, store.ItemProposalPayload{Operation: op, CategoryID: catID, ItemID: itemID, Title: title, Attributes: rawAttrs, Quantity: quantity, QuantityDelta: delta})
+		var tags []string
+		if raw, ok := args["tags"]; ok {
+			data, _ := json.Marshal(raw)
+			if err := json.Unmarshal(data, &tags); err != nil {
+				return nil, nil, errors.New("tags must be an array of strings")
+			}
+		}
+		var location *string
+		if value, ok := args["location"].(string); ok {
+			location = &value
+		}
+		var primary *string
+		if value, ok := args["primary_image_id"].(string); ok {
+			primary = &value
+		}
+		var removals []string
+		if raw, ok := args["remove_fields"]; ok {
+			data, _ := json.Marshal(raw)
+			if err := json.Unmarshal(data, &removals); err != nil {
+				return nil, nil, errors.New("remove_fields must be a list of field keys")
+			}
+		}
+		p, err := s.ProposeItemChange(ctx, store.ItemProposalPayload{PrimaryImageID: primary, RemoveFields: removals, Tags: tags, Location: location, Operation: op, CategoryID: catID, ItemID: itemID, Title: title, Attributes: rawAttrs, Quantity: quantity, QuantityDelta: delta})
 		if err != nil {
 			return nil, nil, err
 		}
@@ -184,7 +234,18 @@ func (s *Service) executeAgentTool(ctx context.Context, name string, args map[st
 				args["description"] = current.Description
 			}
 		}
-		p, err := s.ProposeCategoryChange(ctx, store.CategoryProposalPayload{Operation: operation, CategoryID: categoryID, Name: str("name"), Description: str("description"), Attributes: attrs})
+		var defaultTags []string
+		if raw, ok := args["default_tags"]; ok {
+			data, _ := json.Marshal(raw)
+			if err := json.Unmarshal(data, &defaultTags); err != nil {
+				return nil, nil, err
+			}
+		}
+		defaults, _ := json.Marshal(args["default_values"])
+		if string(defaults) == "null" {
+			defaults = nil
+		}
+		p, err := s.ProposeCategoryChange(ctx, store.CategoryProposalPayload{DefaultTags: defaultTags, DefaultValues: defaults, Operation: operation, CategoryID: categoryID, Name: str("name"), Description: str("description"), Attributes: attrs})
 		if err != nil {
 			return nil, nil, err
 		}
@@ -206,6 +267,9 @@ func (s *Service) executeAgentTool(ctx context.Context, name string, args map[st
 		componentType := "item_proposal"
 		if proposal.Type == "category_create" {
 			componentType = "category_proposal"
+		}
+		if proposal.Type == "graph_change" {
+			componentType = "graph_proposal"
 		}
 		comp := Component{Type: componentType, Data: proposal}
 		return map[string]any{"proposal": proposal, "presented": true}, &comp, nil
@@ -238,7 +302,7 @@ func (s *Service) executeAgentTool(ctx context.Context, name string, args map[st
 				if len(cats) == 1 {
 					cat = cats[0]
 				}
-				data = map[string]any{"category": cat, "items": result["matches"], "total_records": result["total_records"], "has_more": result["has_more"]}
+				data = map[string]any{"category": cat, "items": result["matches"], "total_records": result["total_records"], "has_more": result["has_more"], "filters": result["filters"], "offset": result["offset"], "limit": result["limit"]}
 			}
 		case "item_detail":
 			if result, ok := data.(map[string]any); ok {
@@ -320,15 +384,15 @@ func comparisonRows(result map[string]any) [][]any {
 			}
 		}
 	}
-	rows := [][]any{{"Item", "Quantity", "Details"}}
+	rows := [][]any{{"Item", "Tags", "Fields"}}
 	for _, item := range items {
-		rows = append(rows, []any{item.Title, item.Quantity, string(item.Attributes)})
+		rows = append(rows, []any{item.Title, strings.Join(item.Tags, ", "), string(item.Attributes)})
 	}
 	return rows
 }
 
 func comparisonRowsFrom(value any) [][]any {
-	rows := [][]any{{"Item", "Quantity", "Details"}}
+	rows := [][]any{{"Item", "Tags", "Fields"}}
 	entries, ok := value.([]map[string]any)
 	if !ok {
 		return rows
@@ -338,7 +402,7 @@ func comparisonRowsFrom(value any) [][]any {
 		if !ok {
 			continue
 		}
-		rows = append(rows, []any{item.Title, item.Quantity, string(item.Attributes)})
+		rows = append(rows, []any{item.Title, strings.Join(item.Tags, ", "), string(item.Attributes)})
 	}
 	return rows
 }

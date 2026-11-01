@@ -87,6 +87,8 @@ type itemDraft struct {
 }
 
 type QueryResult struct {
+	Total      int              `json:"total_records"`
+	HasMore    bool             `json:"has_more"`
 	Judgment   string           `json:"judgment"`
 	Confidence string           `json:"confidence,omitempty"`
 	Summary    string           `json:"summary"`
@@ -615,42 +617,49 @@ func (s *Service) listItems(ctx context.Context, message string, categories []st
 	}), nil
 }
 
-func (s *Service) QueryInventory(ctx context.Context, message string, categoryID string) (QueryResult, error) {
-	categories, err := s.store.ListCategories(ctx, 100, 0)
+// QueryInventory translates a read-only request into bounded tag/field filters.
+// Templates are creation shortcuts and never select inventory membership.
+func (s *Service) QueryInventory(ctx context.Context, message, categoryID string) (QueryResult, error) {
+	if categoryID != "" {
+		return QueryResult{}, errors.New("templates no longer own items; search using tags or registered fields")
+	}
+	plan := struct {
+		Query string `json:"query"`
+		Tags  string `json:"tags"`
+		Field string `json:"attribute_key"`
+		Value string `json:"attribute_value"`
+	}{Query: strings.TrimSpace(message)}
+	model := s.cfg.ThinkingModel
+	if model == "" {
+		model = s.cfg.MainModel
+	}
+	if s.modelConfigured(model) {
+		vocabulary, err := s.store.Vocabulary(ctx)
+		if err != nil {
+			return QueryResult{}, err
+		}
+		facets, err := s.store.LibraryFacets(ctx)
+		if err != nil {
+			return QueryResult{}, err
+		}
+		instruction := `Translate the inventory search request into ONLY JSON: {"query":"optional substring","tags":"comma-separated exact stored tags; all must match","attribute_key":"optional approved field key","attribute_value":"optional exact field value"}. Use provided tags and field keys, never invent them. Use an empty query when tags/field filters express the request. Do not change any data. Templates do not own items. Context: ` + mustJSON(map[string]any{"vocabulary": vocabulary, "inventory": facets})
+		if err := s.completeJSON(ctx, model, instruction, message, &plan); err != nil {
+			return QueryResult{}, err
+		}
+	}
+	result, err := s.SearchTagged(ctx, plan.Query, "", plan.Field, plan.Value, plan.Tags, "", 100, 0)
 	if err != nil {
 		return QueryResult{}, err
 	}
-
-	selected := make([]store.Category, 0, 1)
-	if categoryID != "" {
-		for i := range categories {
-			if categories[i].ID == categoryID {
-				selected = append(selected, categories[i])
-				break
-			}
-		}
-	} else {
-		selected, err = s.selectQueryCategories(ctx, message, categories)
-		if err != nil {
-			return QueryResult{}, err
-		}
+	judgment := "no"
+	if result.Total > 0 {
+		judgment = "yes"
 	}
-	if len(selected) == 0 {
-		return QueryResult{
-			Judgment: "uncertain",
-			Summary:  "I could not find an inventory collection to search.",
-		}, nil
+	summary := fmt.Sprintf("Found %d matching item(s).", result.Total)
+	if result.HasMore {
+		summary += fmt.Sprintf(" Showing the first %d; narrow the search or ask Remy for another page.", len(result.Items))
 	}
-
-	items := make([]store.Item, 0)
-	for _, category := range selected {
-		categoryItems, err := s.store.ListItems(ctx, category.ID, 500, 0)
-		if err != nil {
-			return QueryResult{}, err
-		}
-		items = append(items, categoryItems...)
-	}
-	return s.matchInventory(ctx, message, selected, items)
+	return QueryResult{Judgment: judgment, Confidence: "medium", Summary: summary, Matches: result.Items, Total: result.Total, HasMore: result.HasMore}, nil
 }
 
 func (s *Service) queryInventory(ctx context.Context, message string, _ []store.Category) (Response, error) {
