@@ -3,9 +3,11 @@ package authority
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"strings"
 	"testing"
 	"time"
 )
@@ -115,5 +117,32 @@ func TestLiveAuthorities(t *testing.T) {
 	}
 	if len(c) != 0 {
 		t.Fatal("unexpected match for unknown object")
+	}
+}
+
+func TestWikidataBatchesAnonymousEntityReads(t *testing.T) {
+	calls := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		ids := strings.Split(r.URL.Query().Get("ids"), "|")
+		if len(ids) > 50 {
+			t.Errorf("anonymous entity batch exceeded 50: %d", len(ids))
+		}
+		calls++
+		entities := map[string]any{}
+		for _, id := range ids {
+			entities[id] = map[string]any{"id": id}
+		}
+		json.NewEncoder(w).Encode(map[string]any{"entities": entities})
+	}))
+	defer srv.Close()
+	p := Wikidata{BaseURL: srv.URL, HTTP: NewClient()}
+	p.HTTP.Wait = func(context.Context, string) error { return nil }
+	ids := []string{}
+	for i := 1; i <= 80; i++ {
+		ids = append(ids, fmt.Sprintf("Q%d", i))
+	}
+	got, err := p.fetch(context.Background(), ids)
+	if err != nil || len(got) != 80 || calls != 2 {
+		t.Fatalf("batch read failed: %d entities, %d calls, %v", len(got), calls, err)
 	}
 }

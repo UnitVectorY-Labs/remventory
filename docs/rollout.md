@@ -1,7 +1,9 @@
-# Production rollout review — not executed
+# Production rollout and rollback
 
-Production remains unchanged. Do not commit or push the deployment repository
-until the local experience, results and migration plan have been approved.
+The user authorized production deployment and a small enrichment sample on
+November 3, 2026. The application image is built by the main-branch workflow;
+worker configuration and writable temporary storage were applied to the existing
+deployment. Preserve original fields and use proposals for inventory changes.
 
 ## Application and database
 
@@ -46,8 +48,8 @@ verify them first on a restored snapshot and use a controlled rollout.
 - The existing deployment uses `readOnlyRootFilesystem: true`. Multipart parsing
   can spill to disk, so add a size-limited `emptyDir` mounted at `/tmp`, or set an
   equivalent writable `TMPDIR`. The repository has a proposed patch in
-  `dev/production-worker-patch.yaml`; review it and the current deployment before
-  applying. It has not been copied into the deployment repository or applied.
+  `dev/production-worker-patch.yaml`. It has been applied to production and
+  recorded in the local Talos repository, preserving prior unrelated edits.
 - Add resource requests/limits suitable for concurrent image decoding; originals
   allow 50 million pixels and uploads are bounded. Consider ingress concurrency
   limits if capture volume rises. There is no arbitrary file upload support.
@@ -98,3 +100,15 @@ should use a MetaBrainz service agreement or local dump; later open release-leve
 sources for home video/hardware; broader TV child traversal beyond bounded pages;
 and user-reviewed equivalence/merges across providers. The prototype access token
 remains the existing access-control model.
+
+
+## Rollout observations
+
+The first image build and automated unit/security checks succeeded. The rollout
+trigger's GitHub OIDC token acquisition failed with a socket hang-up, so the
+approved deployment used `kubectl rollout restart` after the image was published.
+This trigger failure is independent of application startup and migrations.
+
+A final live provider run exposed Wikidata's anonymous 50-ID request limit on a
+large TV hierarchy. Entity retrieval now splits larger bounded traversals into
+batches of at most 50; a regression test verifies all 80 entities survive batching.

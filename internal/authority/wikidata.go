@@ -77,6 +77,19 @@ type wdClaim struct {
 var wdRelations = map[string]string{"P179": "part_of_series", "P361": "part_of", "P527": "contains", "P144": "based_on", "P4969": "derivative_work", "P57": "directed_by", "P161": "cast", "P50": "by_author", "P175": "by_artist", "P400": "platform", "P178": "developed_by", "P123": "published_by", "P750": "distributed_by", "P31": "instance_of", "P138": "named_after", "P8956": "compatible_with"}
 
 func (p *Wikidata) fetch(ctx context.Context, ids []string) (map[string]wdEntity, error) {
+	if len(ids) > 50 {
+		combined := map[string]wdEntity{}
+		for start := 0; start < len(ids); start += 50 {
+			batch, err := p.fetch(ctx, ids[start:min(start+50, len(ids))])
+			if err != nil {
+				return nil, err
+			}
+			for id, e := range batch {
+				combined[id] = e
+			}
+		}
+		return combined, nil
+	}
 	var res struct {
 		Entities map[string]wdEntity `json:"entities"`
 		Error    any                 `json:"error"`
