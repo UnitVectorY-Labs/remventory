@@ -241,7 +241,7 @@ async function openCatalog(existing = null, startingTemplate = null) {
   form.onsubmit = async event => {
     event.preventDefault(); if (busy || identifying || (!existing && !templateStep.querySelector("select").value)) return;
     if (!reviewing) {
-      frozen = { operation: existing ? "update" : "create", ...(existing ? { item_id: existing.id } : {}), tags: parseTags(), attributes: editor.read(), ...(existingPhotos.some(photo => photo.id === primary) ? { primary_image_id: primary } : {}) };
+      frozen = { operation: existing ? "update" : "create", ...(existing ? { item_id: existing.id } : {}), tags: parseTags(), attributes: editor.read(), ...(existing ? { remove_fields: Object.keys(existing.attributes || {}).filter(key => !Object.hasOwn(editor.read(), key)) } : {}), ...(existingPhotos.some(photo => photo.id === primary) ? { primary_image_id: primary } : {}) };
       summary.replaceChildren(el("h3", "", frozen.attributes.title || frozen.tags.join(" · ") || "Item"));
       const list = el("dl", "details"); appendDetail(list, "Tags", frozen.tags.join(", "));
       for (const [key, value] of Object.entries(frozen.attributes)) appendAttributeDetail(list, key, value);

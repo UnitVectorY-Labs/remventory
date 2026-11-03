@@ -8,6 +8,7 @@ import (
 	"github.com/UnitVectorY-Labs/remventory/internal/authority"
 	"github.com/jackc/pgx/v5"
 	"regexp"
+	"strings"
 	"time"
 )
 
@@ -178,6 +179,26 @@ func (s *Store) EntityDetail(ctx context.Context, id string) (EntityDocument, er
 const ownershipRelations = `('contains','release_of','version_of','performance_of')`
 
 func (s *Store) GraphSearch(ctx context.Context, text, kind, year, entityID string) ([]Item, error) {
+	text = strings.TrimSpace(text)
+	kind = strings.TrimSpace(kind)
+	year = strings.TrimSpace(year)
+	switch strings.ToLower(kind) {
+	case "movie", "movies", "films":
+		kind = "film"
+	case "tv", "tv series", "television series", "episodes", "episode":
+		kind = "television"
+	}
+	switch strings.ToLower(text) {
+	case "movie", "movies", "film", "films":
+		if kind == "" {
+			kind = "film"
+		}
+		text = ""
+	}
+	if year != "" && text == year {
+		text = ""
+	}
+
 	if year != "" && !regexp.MustCompile(`^[0-9]{4}$`).MatchString(year) {
 		return nil, fmt.Errorf("year must have four digits")
 	}

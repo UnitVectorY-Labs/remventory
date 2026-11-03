@@ -113,6 +113,12 @@ func TestCanonicalApprovalDatesAndOwnership(t *testing.T) {
 	if err != nil || len(items) != 0 {
 		t.Fatal("later publication date incorrectly treated as original year", err)
 	}
+	for _, filters := range [][2]string{{"movies", ""}, {"", "movie"}, {"1999", "film"}} {
+		found, e := s.GraphSearch(ctx, filters[0], filters[1], "1999", "")
+		if e != nil || len(found) != 1 {
+			t.Fatalf("natural movie/year filters lost owned work: %v, %v", filters, e)
+		}
+	}
 	items, err = s.GraphSearch(ctx, "Unowned Film", "", "", "")
 	if err != nil {
 		t.Fatal(err)
@@ -175,5 +181,58 @@ func TestJobLeaseFencingAndOriginalFields(t *testing.T) {
 		if item.Title != "Original" || v["condition"] != "Mine" {
 			t.Fatal("overwrote original item", item)
 		}
+	}
+}
+
+func TestPartialItemUpdatesPreserveOmittedFields(t *testing.T) {
+	s := canonicalTestStore(t)
+	ctx := context.Background()
+	var id string
+	err := s.pool.QueryRow(ctx, `insert into items(user_id,title,tags,attributes_jsonb) values($1,'Original',array['Movies'],'{"title":"Original","condition":"Mine","year":1999}') returning id`, DefaultUserID).Scan(&id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	p, err := s.CreateItemProposal(ctx, ItemProposalPayload{Operation: "update", ItemID: id, Tags: []string{"Movies", "Box set"}, Attributes: json.RawMessage(`{}`)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = s.DecideProposal(ctx, p.ID, ProposalDecision{Approve: true}); err != nil {
+		t.Fatal(err)
+	}
+	item, err := s.GetItem(ctx, id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var fields map[string]any
+	json.Unmarshal(item.Attributes, &fields)
+	if item.Title != "Original" || fields["condition"] != "Mine" || fields["year"] != float64(1999) {
+		t.Fatal("tag-only update replaced personal fields", item)
+	}
+	stale, err := s.CreateItemProposal(ctx, ItemProposalPayload{Operation: "update", ItemID: id, Attributes: json.RawMessage(`{"year":2000}`)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	removal, err := s.CreateItemProposal(ctx, ItemProposalPayload{Operation: "update", ItemID: id, RemoveFields: []string{"condition"}, Attributes: json.RawMessage(`{}`)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = s.DecideProposal(ctx, removal.ID, ProposalDecision{Approve: true}); err != nil {
+		t.Fatal(err)
+	}
+	item, err = s.GetItem(ctx, id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	json.Unmarshal(item.Attributes, &fields)
+	var remaining map[string]any
+	json.Unmarshal(item.Attributes, &remaining)
+	if _, ok := remaining["condition"]; ok {
+		t.Fatal("explicit field removal ignored")
+	}
+	if remaining["title"] != "Original" {
+		t.Fatal("explicit removal affected another field")
+	}
+	if _, err = s.DecideProposal(ctx, stale.ID, ProposalDecision{Approve: true}); err == nil {
+		t.Fatal("stale proposal overwrote a newer edit")
 	}
 }

@@ -170,6 +170,23 @@ func (s *Store) prepareItem(ctx context.Context, p ItemProposalPayload) (ItemPro
 			return p, errors.New("attributes must be a JSON object")
 		}
 	}
+	if p.Operation == "update" {
+		current, err := s.GetItem(ctx, p.ItemID)
+		if err != nil {
+			return p, err
+		}
+		original := map[string]any{}
+		if err = json.Unmarshal(current.Attributes, &original); err != nil {
+			return p, err
+		}
+		for key, value := range values {
+			original[key] = value
+		}
+		values = original
+		if len(p.PreviousAttributes) == 0 {
+			p.PreviousAttributes = current.Attributes
+		}
+	}
 	if p.Operation == "" || p.Operation == "create" {
 		if p.CategoryID != "" {
 			template, err := s.GetCategoryDefinition(ctx, p.CategoryID)
@@ -219,6 +236,9 @@ func (s *Store) prepareItem(ctx context.Context, p ItemProposalPayload) (ItemPro
 		if _, ok := values["quantity"]; !ok {
 			values["quantity"] = p.Quantity
 		}
+	}
+	for _, key := range p.RemoveFields {
+		delete(values, key)
 	}
 	p.Attributes, _ = json.Marshal(values)
 	p.CategoryID = ""

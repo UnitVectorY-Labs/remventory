@@ -553,19 +553,12 @@ func (s *Store) RevisePendingProposal(ctx context.Context, proposalID string, pa
 		if revised.CategoryID != "" {
 			return Proposal{}, errors.New("items have no template membership; revise their tags and registered values directly")
 		}
-		values := map[string]any{}
-		if err := json.Unmarshal(revised.Attributes, &values); err != nil {
+		prepared, err := s.prepareItem(ctx, revised)
+		if err != nil {
 			return Proposal{}, err
 		}
-		labelTags := revised.Tags
-		if revised.ItemID != "" && labelTags == nil {
-			item, err := s.getItem(ctx, revised.ItemID)
-			if err != nil {
-				return Proposal{}, err
-			}
-			labelTags = item.Tags
-		}
-		revised.Title = DisplayLabel(values, labelTags)
+		revised = prepared
+
 		normalized, err := s.validateItemProposalPayload(ctx, revised)
 		if err != nil {
 			return Proposal{}, fmt.Errorf("revised item proposal: %w", err)
@@ -656,6 +649,15 @@ func (s *Store) commitProposal(ctx context.Context, tx pgx.Tx, proposal *Proposa
 		var payload ItemProposalPayload
 		if err := json.Unmarshal(proposal.ProposedPayload, &payload); err != nil {
 			return err
+		}
+		if payload.Operation == "update" && len(payload.PreviousAttributes) > 0 {
+			var unchanged bool
+			if err := tx.QueryRow(ctx, `select attributes_jsonb=$2::jsonb from items where id=$1 for update`, payload.ItemID, payload.PreviousAttributes).Scan(&unchanged); err != nil {
+				return err
+			}
+			if !unchanged {
+				return errors.New("item fields changed after this proposal was prepared; review a new proposal")
+			}
 		}
 		fields, err := readFields(ctx, tx)
 		if err != nil {

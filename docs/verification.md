@@ -64,3 +64,12 @@ The small pre-rollout backup is retained privately under
 Development containers, their test volumes and `~/.local/share/remventory-dev/`
 are disposable after production verification. Future development can recreate an
 isolated snapshot using the documented scripts.
+
+The tag-only production edit exposed an existing HTTP proposal path that replaced
+attributes instead of preserving omitted values. It temporarily cleared the
+Matrix item's attributes; a corrective proposal immediately restored the exact
+pre-rollout title and attributes, retaining the intended tag and canonical links.
+The shared store now merges partial updates, the browser submits explicit field
+removals, and approvals reject stale field snapshots. Regression tests cover
+preservation, deliberate removal, and stale proposals. The final baseline check
+must compare all 100 items again after the corrective change.
