@@ -9,7 +9,8 @@ A visual home inventory with Remy, your hamster librarian. Catalog belongings wi
 
 - [Local review and production-data snapshot](docs/local-development.md)
 - [External source compatibility](docs/external-sources.md)
-- [Production rollout review](docs/rollout.md)
+- [Production rollout and rollback](docs/rollout.md)
+- [Verification and collection enrichment sample](docs/verification.md)
 - [Setup and configuration](docs/configuration.md)
 - [Using the collection](docs/usage.md)
 - [Experience and organization design](docs/design.md)

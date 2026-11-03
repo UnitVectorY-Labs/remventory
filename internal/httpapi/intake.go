@@ -259,7 +259,12 @@ func (a api) resolveForIdentification(w http.ResponseWriter, r *http.Request) {
 			uri = e.URI
 		}
 	}
-	job.Result.Matches = append(job.Result.Matches, store.IdentificationMatch{Candidate: authority.Candidate{Ref: g.Root, Label: label, URI: uri}, Graph: g, Confidence: "partial", Reason: "Manually selected for review; source validated identifier."})
+	role := "alternative"
+	if g.Association == "contains" {
+		role = "component"
+	}
+	job.Result.Outcome = "partial"
+	job.Result.Matches = append(job.Result.Matches, store.IdentificationMatch{Role: role, Candidate: authority.Candidate{Ref: g.Root, Label: label, URI: uri}, Graph: g, Confidence: "partial", Reason: "Manually selected for review; source validated identifier."})
 	if err = a.store.ReplaceIdentificationResult(r.Context(), job.ID, job.Result); err != nil {
 		writeError(w, 409, err.Error())
 		return
