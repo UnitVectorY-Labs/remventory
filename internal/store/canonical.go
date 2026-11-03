@@ -187,7 +187,7 @@ func (s *Store) GraphSearch(ctx context.Context, text, kind, year, entityID stri
  ) select distinct i.id,i.user_id,coalesce(i.category_id::text,'') as category_id,i.title,i.attributes_jsonb as attributes,i.quantity,i.created_at,i.updated_at,i.tags,i.location from items i join owned o on o.item_id=i.id join canonical_entities c on c.id=o.entity_id join canonical_metadata m on m.entity_id=c.id
  where i.user_id=$5 and ($1='' or lower(c.label||' '||m.description||' '||m.fields::text) like '%'||lower($1)||'%' or exists(select 1 from canonical_relationships e join canonical_entities target on target.id=e.to_id where e.from_id=c.id and e.relation in ('by_artist','by_author','directed_by','part_of_series','part_of','platform','compatible_with') and lower(target.label) like '%'||lower($1)||'%'))
  and ($2='' or c.kind=$2 or lower(m.description) like '%'||lower($2)||'%')
- and ($3='' or m.fields->>'original_date' like $3||'%' or exists(select 1 from jsonb_array_elements(coalesce(m.fields->'original_dates','[]'::jsonb)) date_value where ltrim(date_value->>'time','+-') like $3||'%'))
+ and ($3='' or coalesce(nullif(m.fields->>'original_date',''),(select min(ltrim(date_value->>'time','+')) from jsonb_array_elements(coalesce(m.fields->'original_dates','[]'::jsonb)) date_value)) like $3||'%')
  and ($4='' or c.id=nullif($4,'')::uuid) order by i.title limit 100`, text, kind, year, entityID, DefaultUserID)
 	if err != nil {
 		return nil, err

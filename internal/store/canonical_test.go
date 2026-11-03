@@ -61,7 +61,7 @@ func TestCanonicalApprovalDatesAndOwnership(t *testing.T) {
 	entity := func(ref authority.Ref, label string, fields map[string]any) authority.Entity {
 		return authority.Entity{Ref: ref, Label: label, Fields: fields, License: "test", RetrievedAt: time.Now()}
 	}
-	g := authority.Graph{Root: root, Entities: []authority.Entity{entity(root, "2015 Box", map[string]any{"release_date": "2015"}), entity(film, "1999 Movie", map[string]any{"original_dates": []any{map[string]any{"time": "+1999-01-01T00:00:00Z"}}}), entity(director, "Director", map[string]any{}), entity(other, "Unowned Film", map[string]any{"original_date": "1999"})}, Edges: []authority.Edge{{From: root, To: film, Relation: "contains"}, {From: film, To: director, Relation: "directed_by"}, {From: other, To: director, Relation: "directed_by"}}}
+	g := authority.Graph{Root: root, Entities: []authority.Entity{entity(root, "2015 Box", map[string]any{"release_date": "2015"}), entity(film, "1999 Movie", map[string]any{"original_dates": []any{map[string]any{"time": "+1999-01-01T00:00:00Z"}, map[string]any{"time": "+2015-01-01T00:00:00Z"}}}), entity(director, "Director", map[string]any{}), entity(other, "Unowned Film", map[string]any{"original_date": "1999"})}, Edges: []authority.Edge{{From: root, To: film, Relation: "contains"}, {From: film, To: director, Relation: "directed_by"}, {From: other, To: director, Relation: "directed_by"}}}
 	if err := s.CacheGraph(ctx, g); err != nil {
 		t.Fatal(err)
 	}
@@ -108,6 +108,10 @@ func TestCanonicalApprovalDatesAndOwnership(t *testing.T) {
 	}
 	if len(items) != 1 || items[0].Title != "My physical box" {
 		t.Fatalf("original-year traversal failed: %+v", items)
+	}
+	items, err = s.GraphSearch(ctx, "", "film", "2015", "")
+	if err != nil || len(items) != 0 {
+		t.Fatal("later publication date incorrectly treated as original year", err)
 	}
 	items, err = s.GraphSearch(ctx, "Unowned Film", "", "", "")
 	if err != nil {
