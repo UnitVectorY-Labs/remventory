@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"github.com/UnitVectorY-Labs/remventory/internal/authority"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -108,6 +109,19 @@ func TestCanonicalApprovalDatesAndOwnership(t *testing.T) {
 	}
 	if len(items) != 1 || items[0].Title != "My physical box" {
 		t.Fatalf("original-year traversal failed: %+v", items)
+	}
+	facts, e := s.CanonicalEvidence(ctx, items)
+	if e != nil {
+		t.Fatal(e)
+	}
+	explained := false
+	for _, fact := range facts {
+		if fact["entity"] == "1999 Movie" && strings.HasPrefix(fmt.Sprint(fact["original_date"]), "1999") {
+			explained = true
+		}
+	}
+	if !explained {
+		t.Fatal("owned item search omitted supporting work/date evidence", facts)
 	}
 	items, err = s.GraphSearch(ctx, "", "film", "2015", "")
 	if err != nil || len(items) != 0 {

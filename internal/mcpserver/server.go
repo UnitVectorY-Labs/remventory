@@ -290,7 +290,11 @@ func New(version string, repo *store.Store, remyService *remy.Service, intakeSer
 		if err != nil {
 			return mcp.NewToolResultError(err.Error()), nil
 		}
-		return mcp.NewToolResultStructuredOnly(map[string]any{"items": items, "limit": 100}), nil
+		facts, err := repo.CanonicalEvidence(ctx, items)
+		if err != nil {
+			return mcp.NewToolResultError(err.Error()), nil
+		}
+		return mcp.NewToolResultStructuredOnly(map[string]any{"items": items, "canonical_evidence": facts, "limit": 100}), nil
 	})
 	server.AddTool(mcp.NewTool("queue_existing_enrichment", mcp.WithDescription("Queue analysis and proposals for existing owned items. Never approves changes."), mcp.WithString("tag"), mcp.WithNumber("limit")), func(ctx context.Context, r mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		jobs, err := repo.QueueEnrichment(ctx, r.GetString("tag", ""), r.GetInt("limit", 10))

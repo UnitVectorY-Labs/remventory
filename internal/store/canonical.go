@@ -242,3 +242,39 @@ func (s *Store) CanonicalID(ctx context.Context, ref authority.Ref) (string, err
 	err := s.pool.QueryRow(ctx, `select entity_id from canonical_identifiers where provider=$1 and kind=$2 and external_id=$3`, ref.Provider, ref.Kind, ref.ID).Scan(&id)
 	return id, err
 }
+
+// CanonicalEvidence explains why an owned object can satisfy a work-level query.
+// It contains source dates and links, rather than asking the model to infer them
+// from the physical item's deliberately unchanged personal attributes.
+func (s *Store) CanonicalEvidence(ctx context.Context, items []Item) ([]map[string]any, error) {
+	out := []map[string]any{}
+	if len(items) == 0 {
+		return out, nil
+	}
+	ids := []string{}
+	for _, item := range items {
+		ids = append(ids, item.ID)
+	}
+	rows, err := s.pool.Query(ctx, `with recursive owned(item_id,entity_id,depth) as (
+ select item_id,entity_id,0 from item_canonical_links where item_id=any($1::uuid[])
+ union select o.item_id,e.to_id,o.depth+1 from owned o join canonical_relationships e on e.from_id=o.entity_id where o.depth<6 and e.relation in `+ownershipRelations+`
+ ), facts as (
+ select distinct o.item_id,c.id,c.label,c.kind,o.depth,m.provider,i.uri,
+ coalesce(nullif(m.fields->>'original_date',''),(select min(ltrim(d->>'time','+')) from jsonb_array_elements(coalesce(m.fields->'original_dates','[]'::jsonb)) d)) original_date,
+ m.fields->>'release_date' release_date
+ from owned o join canonical_entities c on c.id=o.entity_id join canonical_metadata m on m.entity_id=c.id join canonical_identifiers i on i.entity_id=c.id and i.provider=m.provider
+ ), ranked as (select *,row_number() over(partition by item_id order by depth,original_date nulls last,label) rank from facts)
+ select jsonb_build_object('item_id',item_id,'entity_id',id,'entity',label,'kind',kind,'provider',provider,'uri',uri,'original_date',original_date,'release_date',release_date,'relationships',coalesce((select jsonb_agg(jsonb_build_object('relation',related.relation,'entity',related.label)) from (select e.relation,target.label from canonical_relationships e join canonical_entities target on target.id=e.to_id where e.from_id=ranked.id and e.relation in ('by_artist','by_author','directed_by','platform','part_of_series','compatible_with') order by e.relation,target.label limit 8) related),'[]'::jsonb),'basis','approved ownership path through cached source relationships') from ranked where rank<=12 order by item_id,rank limit 300`, ids)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var fact map[string]any
+		if err = rows.Scan(&fact); err != nil {
+			return nil, err
+		}
+		out = append(out, fact)
+	}
+	return out, rows.Err()
+}
