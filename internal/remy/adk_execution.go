@@ -143,7 +143,7 @@ func (s *Service) handleAgent(ctx context.Context, req Request, message string) 
 		tools = append(tools, toolImpl)
 	}
 	temp := float32(.3)
-	a, err := llmagent.New(llmagent.Config{Name: "remy", Description: "Natural language inventory assistant that chooses typed presentations", Model: agentruntime.NewOpenAIModel(s.cfg), Instruction: "Use tools for canonical facts. Answer naturally and choose a typed presentation when useful. Never invent data or commit writes.", Tools: tools, GenerateContentConfig: &genai.GenerateContentConfig{Temperature: &temp, MaxOutputTokens: 2048}})
+	a, err := llmagent.New(llmagent.Config{Name: "remy", Description: "Natural language inventory assistant that chooses typed presentations", Model: agentruntime.NewOpenAIModel(s.cfg), Instruction: remyAgentInstructions, Tools: tools, GenerateContentConfig: &genai.GenerateContentConfig{Temperature: &temp, MaxOutputTokens: 2048}})
 	if err != nil {
 		return Response{}, err
 	}
