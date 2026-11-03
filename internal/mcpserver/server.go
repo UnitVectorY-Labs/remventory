@@ -4,13 +4,14 @@ import (
 	"context"
 	"encoding/json"
 
+	"github.com/UnitVectorY-Labs/remventory/internal/intake"
 	"github.com/UnitVectorY-Labs/remventory/internal/remy"
 	"github.com/UnitVectorY-Labs/remventory/internal/store"
 	"github.com/mark3labs/mcp-go/mcp"
 	mcpserver "github.com/mark3labs/mcp-go/server"
 )
 
-func New(version string, repo *store.Store, remyService *remy.Service) *mcpserver.MCPServer {
+func New(version string, repo *store.Store, remyService *remy.Service, intakeServices ...*intake.Service) *mcpserver.MCPServer {
 	server := mcpserver.NewMCPServer("remventory", version)
 
 	server.AddTool(mcp.NewTool("get_inventory_vocabulary", mcp.WithDescription("Read approved shared fields, tag field suggestions, and creation templates.")), func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
@@ -284,6 +285,42 @@ func New(version string, repo *store.Store, remyService *remy.Service) *mcpserve
 		},
 	)
 
+	server.AddTool(mcp.NewTool("search_canonical_inventory", mcp.WithDescription("Search cached approved ownership through contained works, releases and versions; original year matches the work, not packaging. At most 100 results; unenriched records may be missing."), mcp.WithString("query"), mcp.WithString("kind"), mcp.WithString("year")), func(ctx context.Context, r mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		items, err := repo.GraphSearch(ctx, r.GetString("query", ""), r.GetString("kind", ""), r.GetString("year", ""), "")
+		if err != nil {
+			return mcp.NewToolResultError(err.Error()), nil
+		}
+		return mcp.NewToolResultStructuredOnly(map[string]any{"items": items, "limit": 100}), nil
+	})
+	server.AddTool(mcp.NewTool("queue_existing_enrichment", mcp.WithDescription("Queue analysis and proposals for existing owned items. Never approves changes."), mcp.WithString("tag"), mcp.WithNumber("limit")), func(ctx context.Context, r mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		jobs, err := repo.QueueEnrichment(ctx, r.GetString("tag", ""), r.GetInt("limit", 10))
+		if err != nil {
+			return mcp.NewToolResultError(err.Error()), nil
+		}
+		return mcp.NewToolResultStructuredOnly(jobs), nil
+	})
+	server.AddTool(mcp.NewTool("list_identifications", mcp.WithDescription("List durable identification jobs and review results.")), func(ctx context.Context, r mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		jobs, err := repo.Identifications(ctx)
+		if err != nil {
+			return mcp.NewToolResultError(err.Error()), nil
+		}
+		return mcp.NewToolResultStructuredOnly(jobs), nil
+	})
+	server.AddTool(mcp.NewTool("propose_identification_link", mcp.WithDescription("Propose linking reviewed identification candidates to an owned item or creating a photographed item. Explicit confirmation still required."), mcp.WithString("job_id"), mcp.WithArray("selected"), mcp.WithString("title"), mcp.WithArray("tags")), func(ctx context.Context, r mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		b, _ := json.Marshal(r.GetArguments())
+		var p store.IdentificationProposal
+		if err := json.Unmarshal(b, &p); err != nil {
+			return mcp.NewToolResultError(err.Error()), nil
+		}
+		proposal, err := repo.ProposeIdentification(ctx, p)
+		if err != nil {
+			return mcp.NewToolResultError(err.Error()), nil
+		}
+		return mcp.NewToolResultStructuredOnly(proposal), nil
+	})
+	if len(intakeServices) > 0 && intakeServices[0] != nil {
+		addAuthorityTools(server, intakeServices[0])
+	}
 	return server
 }
 

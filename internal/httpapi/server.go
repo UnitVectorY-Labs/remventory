@@ -14,6 +14,7 @@ import (
 	"strconv"
 
 	"github.com/UnitVectorY-Labs/remventory/internal/config"
+	"github.com/UnitVectorY-Labs/remventory/internal/intake"
 	"github.com/UnitVectorY-Labs/remventory/internal/itemimages"
 	"github.com/UnitVectorY-Labs/remventory/internal/remy"
 	"github.com/UnitVectorY-Labs/remventory/internal/store"
@@ -23,6 +24,7 @@ import (
 var staticFiles embed.FS
 
 type Options struct {
+	Intake     *intake.Service
 	Config     config.Config
 	Store      *store.Store
 	Remy       *remy.Service
@@ -36,6 +38,7 @@ func New(opts Options) http.Handler {
 	mux := http.NewServeMux()
 	api := api{
 		cfg:     opts.Config,
+		intake:  opts.Intake,
 		store:   opts.Store,
 		remy:    opts.Remy,
 		version: opts.Version,
@@ -44,6 +47,20 @@ func New(opts Options) http.Handler {
 	}
 
 	mux.HandleFunc("GET /healthz", api.health)
+	mux.HandleFunc("GET /api/intake", api.withToken(api.listIdentifications))
+	mux.HandleFunc("POST /api/intake", api.withToken(api.createIdentification))
+	mux.HandleFunc("POST /api/intake/enrich", api.withToken(api.enrichCollection))
+	mux.HandleFunc("GET /api/intake/{id}", api.withToken(api.getIdentification))
+	mux.HandleFunc("POST /api/intake/{id}/action", api.withToken(api.identificationAction))
+	mux.HandleFunc("POST /api/intake/{id}/proposal", api.withToken(api.proposeIdentification))
+	mux.HandleFunc("POST /api/intake/{id}/resolve", api.withToken(api.resolveForIdentification))
+	mux.HandleFunc("GET /api/intake/{id}/ownership", api.withToken(api.relatedOwnership))
+	mux.HandleFunc("GET /api/intake/{id}/photos/{photo}/{variant}", api.withToken(api.identificationImage))
+	mux.HandleFunc("GET /api/authorities/search", api.withToken(api.authoritySearch))
+	mux.HandleFunc("GET /api/canonical/search", api.withToken(api.graphSearch))
+	mux.HandleFunc("GET /api/canonical/{id}", api.withToken(api.canonicalDetail))
+	mux.HandleFunc("GET /api/items/{id}/canonical", api.withToken(api.itemCanonical))
+
 	mux.HandleFunc("GET /readyz", api.ready)
 	mux.HandleFunc("GET /{$}", api.index)
 	mux.Handle("GET /static/", http.StripPrefix("/static/", http.FileServerFS(staticFS())))
@@ -93,6 +110,7 @@ func (a api) remyDialog(w http.ResponseWriter, r *http.Request) {
 }
 
 type api struct {
+	intake  *intake.Service
 	cfg     config.Config
 	store   *store.Store
 	remy    *remy.Service

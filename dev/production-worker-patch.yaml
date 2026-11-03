@@ -1,0 +1,24 @@
+# Review-only strategic merge patch. Not applied to the real deployment.
+# Requires approval, completed migration, and verified outbound API connectivity.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: remventory
+  namespace: uvy-prod
+spec:
+  template:
+    spec:
+      securityContext:
+        fsGroup: 65532
+      volumes:
+        - name: temporary-uploads
+          emptyDir:
+            sizeLimit: 512Mi
+      containers:
+        - name: remventory
+          env:
+            - name: REMVENTORY_WORKER_ENABLED
+              value: "true"
+          volumeMounts:
+            - name: temporary-uploads
+              mountPath: /tmp

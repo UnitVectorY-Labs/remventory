@@ -14,6 +14,7 @@ import (
 
 	"github.com/UnitVectorY-Labs/remventory/internal/config"
 	"github.com/UnitVectorY-Labs/remventory/internal/httpapi"
+	"github.com/UnitVectorY-Labs/remventory/internal/intake"
 	"github.com/UnitVectorY-Labs/remventory/internal/itemimages"
 	"github.com/UnitVectorY-Labs/remventory/internal/mcpserver"
 	"github.com/UnitVectorY-Labs/remventory/internal/remy"
@@ -77,9 +78,16 @@ func run() error {
 	} else {
 		logger.Warn("S3 image storage is not configured; image uploads will report unavailable")
 	}
+	intakeService := intake.New(cfg, repo, imageObjects)
+	workerDone := make(chan struct{})
+	if cfg.WorkerEnabled && repo != nil {
+		go func() { defer close(workerDone); intakeService.Run(ctx) }()
+	} else {
+		close(workerDone)
+	}
 	var mcpHandler http.Handler
 	if repo != nil {
-		mcpHandler = mcptransport.NewStreamableHTTPServer(mcpserver.New(Version, repo, remyService))
+		mcpHandler = mcptransport.NewStreamableHTTPServer(mcpserver.New(Version, repo, remyService, intakeService))
 	}
 
 	api := httpapi.New(httpapi.Options{
@@ -90,6 +98,7 @@ func run() error {
 		Version:    Version,
 		Logger:     logger,
 		Images:     imageObjects,
+		Intake:     intakeService,
 	})
 
 	server := &http.Server{
@@ -110,6 +119,11 @@ func run() error {
 		defer cancel()
 		if err := server.Shutdown(shutdownCtx); err != nil {
 			return fmt.Errorf("shutdown server: %w", err)
+		}
+		select {
+		case <-workerDone:
+		case <-time.After(15 * time.Second):
+			logger.Warn("worker shutdown timed out; job will recover after lease expiry")
 		}
 		return nil
 	case err := <-errc:

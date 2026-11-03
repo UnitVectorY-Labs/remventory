@@ -228,7 +228,20 @@ func (s *Store) Ping(ctx context.Context) error {
 }
 
 func (s *Store) Migrate(ctx context.Context) error {
-	_, err := s.pool.Exec(ctx, `create table if not exists schema_migrations (
+	connection, err := s.pool.Acquire(ctx)
+	if err != nil {
+		return err
+	}
+	defer connection.Release()
+	if _, err = connection.Exec(ctx, `select pg_advisory_lock(77626110)`); err != nil {
+		return err
+	}
+	defer func() {
+		unlock, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		_, _ = connection.Exec(unlock, `select pg_advisory_unlock(77626110)`)
+	}()
+	_, err = connection.Exec(ctx, `create table if not exists schema_migrations (
 		version text primary key,
 		applied_at timestamptz not null default now()
 	)`)
@@ -245,7 +258,8 @@ func (s *Store) Migrate(ctx context.Context) error {
 		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".sql") {
 			continue
 		}
-		applied, err := s.migrationApplied(ctx, entry.Name())
+		var applied bool
+		err := connection.QueryRow(ctx, `select exists(select 1 from schema_migrations where version=$1)`, entry.Name()).Scan(&applied)
 		if err != nil {
 			return err
 		}
@@ -258,7 +272,7 @@ func (s *Store) Migrate(ctx context.Context) error {
 			return err
 		}
 
-		tx, err := s.pool.Begin(ctx)
+		tx, err := connection.Begin(ctx)
 		if err != nil {
 			return err
 		}
@@ -513,6 +527,8 @@ func (s *Store) RevisePendingProposal(ctx context.Context, proposalID string, pa
 	}
 
 	switch proposal.Type {
+	case "identification_link":
+		return Proposal{}, errors.New("revise identification through its review queue")
 	case "graph_change":
 		var revised GraphProposalPayload
 		if err := json.Unmarshal(payload, &revised); err != nil {
@@ -622,6 +638,8 @@ func (s *Store) DecideProposal(ctx context.Context, proposalID string, decision 
 
 func (s *Store) commitProposal(ctx context.Context, tx pgx.Tx, proposal *Proposal) error {
 	switch proposal.Type {
+	case "identification_link":
+		return applyIdentification(ctx, tx, proposal)
 	case "graph_change":
 		var payload GraphProposalPayload
 		if err := json.Unmarshal(proposal.ProposedPayload, &payload); err != nil {
@@ -1076,7 +1094,15 @@ func (s *Store) SearchLibrary(ctx context.Context, query, categoryID, attributeK
 	if offset < 0 {
 		offset = 0
 	}
-	where := `($1 = '' or lower(i.title || ' ' || i.attributes_jsonb::text || ' ' || array_to_string(i.tags, ' ')) like '%' || lower($1) || '%')
+	where := `($1 = '' or lower(i.title || ' ' || i.attributes_jsonb::text || ' ' || array_to_string(i.tags, ' ')) like '%' || lower($1) || '%' or exists (
+ with recursive owned_entities(entity_id,depth) as (
+ select entity_id,0 from item_canonical_links where item_id=i.id
+ union select e.to_id,o.depth+1 from owned_entities o join canonical_relationships e on e.from_id=o.entity_id where o.depth<6 and e.relation in ('contains','release_of','version_of','performance_of')
+ ) select 1 from owned_entities o join canonical_entities c on c.id=o.entity_id join canonical_metadata m on m.entity_id=c.id
+ where lower(c.label || ' ' || m.description || ' ' || m.fields::text) like '%'||lower($1)||'%'
+ or to_tsvector('simple',c.label) @@ plainto_tsquery('simple',$1) or m.search_document @@ plainto_tsquery('simple',$1)
+ or exists(select 1 from canonical_relationships e join canonical_entities target on target.id=e.to_id where e.from_id=c.id and e.relation in ('by_artist','by_author','directed_by','part_of_series','part_of','platform','compatible_with') and lower(target.label) like '%'||lower($1)||'%')
+ ))
 		and ($2 = '' or i.category_id = nullif($2,'')::uuid)
 		and ($3 = '' or lower(coalesce(i.attributes_jsonb ->> $3, '')) = lower($4)) and ($5 = '' or i.tags @> string_to_array($5, ',')) and ($6 = '' or i.attributes_jsonb->>'location' = $6)`
 	var total int

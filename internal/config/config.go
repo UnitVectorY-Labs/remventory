@@ -8,6 +8,7 @@ import (
 )
 
 type Config struct {
+	WorkerEnabled   bool
 	HTTPAddr        string
 	DatabaseURL     string
 	OpenAIBaseURL   string
@@ -32,6 +33,7 @@ type Config struct {
 
 func Load() Config {
 	return Config{
+		WorkerEnabled:   envBool("REMVENTORY_WORKER_ENABLED", false),
 		HTTPAddr:        env("REMVENTORY_HTTP_ADDR", ":8080"),
 		DatabaseURL:     env("DATABASE_URL", ""),
 		OpenAIBaseURL:   env("OPENAI_BASE_URL", "http://localhost:11434/v1"),
