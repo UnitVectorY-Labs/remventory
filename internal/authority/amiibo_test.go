@@ -36,7 +36,7 @@ func TestDisplayPlanCannotInventFacts(t *testing.T) {
 	g := Graph{Root: Ref{"amiibo", "figure", "0000000000000002"}, Entities: []Entity{{Ref: Ref{"amiibo", "figure", "0000000000000002"}, Label: "Mario", Fields: map[string]any{"character": "Mario", "amiibo_series": "Super Smash Bros.", "release_dates": map[string]any{"na": "2014-11-21"}}}}}
 	p := CuratePlan(g, DisplayPlan{Layout: "<script>", Fields: []string{"price", "amiibo_series", "release_dates.na", "amiibo_series"}})
 	c := RenderCard(g, p, true)
-	if c.Title != "Mario" || len(c.Facts) != 2 || c.Facts[0].Value != "Super Smash Bros." || c.Layout != "identity" {
+	if c.Title != "Mario" || c.Subtitle != "Super Smash Bros." || len(c.Facts) != 1 || c.Facts[0].Value != "2014-11-21" || c.Layout != "identity" {
 		t.Fatal("presentation introduced unverified data", c)
 	}
 	original := DisplayFingerprint(g)
