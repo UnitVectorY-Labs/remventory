@@ -1,80 +1,287 @@
-// Durable capture and review. Drafts are server-owned once upload completes.
-let intakePoll;
-let intakeFilter = 'active';
-const intakeNav = button('Capture & identify', () => showIntake(), 'nav-button', 'camera');
+// One decision per screen. Identification remains durable when the user leaves.
+let flow = { kind: '', photos: [], text: '' };
+let flowTimer, flowEpoch = 0;
+const intakeNav = button('Pending items', () => showIntake(), 'nav-button', 'camera');
 document.querySelector('.library-sidebar nav').insertBefore(intakeNav, document.querySelector('#review-changes'));
 document.querySelector('#add-item').onclick = () => showCapture();
-const originalSetWorkspace = setWorkspace;
-setWorkspace = function(mode) { originalSetWorkspace(mode); intakeNav.classList.toggle('selected', mode === 'intake'); if(mode === 'intake') {document.querySelector('.library-heading h1').textContent = 'Capture & identify';document.querySelector('#collection-navigation').hidden=true;} if(mode !== 'intake') clearTimeout(intakePoll); };
-function intakeError(host, error) { host.textContent = error.message || String(error); host.setAttribute('role','alert'); }
-function sourceLink(entity) { const link = el('a', '', entity.label || entity.id); if (/^https:\/\/(musicbrainz\.org|www\.wikidata\.org)\//.test(entity.uri || '')) {link.href=entity.uri;link.target='_blank';link.rel='noopener noreferrer';} return link; }
-function captureCategory() {
- const select = el('select'); select.setAttribute('aria-label','Category');select.required=true;
- for (const label of [...new Set(['', ...libraryTypes.map(t=>t.name), ...(Object.keys(graphVocabulary.tag_fields || {})), 'Music / vinyl', 'Movies / video', 'Television', 'Video game', 'Hardware', 'Accessory', 'Book', 'Other'])]) {const option=el('option','',label || 'Choose a category');option.value=label;select.append(option);}
- return select;
+const previousWorkspace = setWorkspace;
+setWorkspace = function(mode) {
+  previousWorkspace(mode);
+  document.body.classList.toggle('workflow-mode', mode === 'intake');
+  intakeNav.classList.toggle('selected', mode === 'intake');
+  if (mode === 'intake') {
+    document.querySelector('.library-heading h1').textContent = flow.job?.item_id ? 'Find item details' : 'Add to your collection';
+    document.querySelector('#collection-navigation').hidden = true;
+    document.querySelector('#add-item').hidden = true;
+  } else {
+    clearTimeout(flowTimer); flowEpoch++;
+    const url = new URL(location.href); url.searchParams.delete('identify'); history.replaceState(null, '', url);
+  }
+};
+function flowError(host, error) { host.textContent = error.message || String(error); host.setAttribute('role', 'alert'); }
+function flowScreen(step, title, description) {
+  clearTimeout(flowTimer); flowEpoch++; libraryGeneration++;
+  setWorkspace('intake'); stage.replaceChildren();
+  const root = el('section', 'flow-screen');
+  const progress = el('nav', 'flow-progress'); progress.setAttribute('aria-label', 'Add item progress');
+  ['Type', 'Photos', 'Match', 'Save'].forEach((label, index) => {
+    const node = el('span', index === step ? 'current' : index < step ? 'complete' : '', `${index + 1}. ${label}`);
+    if (index === step) node.setAttribute('aria-current', 'step'); progress.append(node);
+  });
+  const heading = el('header', 'flow-heading'); heading.append(el('h2', '', title));
+  if (description) heading.append(el('p', 'muted', description));
+  const body = el('div', 'flow-body'), actions = el('footer', 'flow-actions');
+  root.append(progress, heading, body, actions); stage.append(root);
+  return { root, body, actions, epoch: flowEpoch };
 }
-async function showCapture() {
- if(activeController) return; setWorkspace('intake'); ++libraryGeneration;
- stage.replaceChildren();const heading=el('div','capture-intro');heading.append(el('h2','','Photograph it. Remy will do the research.'),el('p','muted','Front, back, spine, barcode or labels — group the photos of one object, queue it, then move on to the next.'));
- const form=el('form','capture-form');const category=captureCategory();const files=el('input');files.type='file';files.accept='image/jpeg,image/png,image/gif';files.multiple=true;files.required=true;files.setAttribute('aria-label','Photos of one object');
- const camera=el('input');camera.type='file';camera.accept='image/*';camera.setAttribute('capture','environment');camera.hidden=true;const photoList=el('div','intake-photos');let chosen=[];let urls=[];
- function preview(){urls.forEach(URL.revokeObjectURL);urls=[];photoList.replaceChildren();chosen.forEach((file,index)=>{const box=el('div','capture-photo');const img=el('img');img.alt=file.name;img.src=URL.createObjectURL(file);urls.push(img.src);box.append(img,button('Remove',()=>{chosen.splice(index,1);preview();}));photoList.append(box);});files.required=chosen.length===0;}
- files.onchange=()=>{chosen.push(...Array.from(files.files));files.value='';preview();};camera.onchange=()=>{chosen.push(...Array.from(camera.files));camera.value='';preview();};
- const text=el('textarea');text.rows=2;text.placeholder='Optional clues: title, catalog number, what is inside the box…';const status=el('p','muted');status.setAttribute('role','status');const submit=el('button','','Queue identification');submit.type='submit';
- form.append(labeled('Category',category),labeled('Photos of one object',files),button('Take another photo',()=>camera.click(),'secondary','camera'),camera,photoList,labeled('Anything Remy should check?',text),el('p','muted','Up to 8 photos · JPEG, PNG or GIF · 12 MB per photo. Adding to inventory happens later, after review.'),submit,status);
- form.onsubmit=async event=>{event.preventDefault();if(!chosen.length){status.textContent='Choose at least one photo.';return};submit.disabled=true;status.textContent='Uploading photos…';const data=new FormData();data.append('category',category.value);data.append('text',text.value);chosen.forEach(f=>data.append('images',f));try{await api('/api/intake',{method:'POST',body:data});chosen=[];preview();text.value='';status.textContent='Queued. You can photograph the next object now.';await refreshIntakeList(list);}catch(e){intakeError(status,e)}finally{submit.disabled=false}};
- const list=el('div');stage.append(heading,form,button('Open full processing & review queue',()=>showIntake()),button('Enter an item manually',()=>openCatalog(),'secondary'),list);await refreshIntakeList(list);pollIntake(list);
+function sourceLink(card) {
+  const a = el('a', 'source-link', `${card.source || 'Source'} ↗`);
+  if (/^https:\/\/(musicbrainz\.org|www\.wikidata\.org|amiiboapi\.org)\//.test(card.url || '')) {
+    a.href = card.url; a.target = '_blank'; a.rel = 'noopener noreferrer';
+  }
+  return a;
+}
+function factCard(card, compact = false) {
+  const root = el('section', compact ? 'identity-card compact' : 'identity-card'); root.dataset.layout=card.layout||'identity';
+  root.append(el('h3', '', card.title));
+  if (card.subtitle) root.append(el('p', 'identity-subtitle', card.subtitle));
+  const facts = el('dl', 'identity-facts');
+  for (const fact of (card.facts || []).slice(0, 4)) { facts.append(el('dt', '', fact.label), el('dd', '', fact.value)); }
+  root.append(facts, sourceLink(card)); return root;
+}
+function jobPhoto(job) {
+  const frame = el('div', 'flow-picture');
+  const p = job.photos?.[0];
+  if (p) {
+    const image = el('img'); image.alt = job.result?.title || 'Your photographed item';
+    image.src = `/api/intake/${job.id}/photos/${p.id}/original`;
+    image.onclick = () => showItemImage(image.alt, image.src); frame.append(image);
+  } else frame.append(icon('box'));
+  return frame;
+}
+function rememberJob(id) { const url = new URL(location.href); url.searchParams.set('identify', id); history.replaceState(null, '', url); }
+function releaseDraft() { for (const p of flow.photos || []) URL.revokeObjectURL(p.url); }
+function showCapture(kind = '') {
+  if (activeController) return;
+  releaseDraft(); flow = { kind, photos: [], text: '' };
+  const url = new URL(location.href); url.searchParams.delete('identify'); history.replaceState(null, '', url);
+  if (kind) return photoStep();
+  return typeStep();
+}
+function typeStep() {
+  const screen = flowScreen(0, 'What are you adding?', 'Choose the kind of thing. Remy will find the details.');
+  const options = el('div', 'kind-grid');
+  for (const [name, hint] of [['Amiibo', 'Nintendo figures and cards'], ['Vinyl', 'Records and pressings'], ['Movies', 'DVD, Blu-ray and box sets'], ['Video games', 'Games and editions'], ['Hardware', 'Consoles and accessories'], ['Other', 'Anything else']]) {
+    const choice = button('', () => { flow.kind = name; photoStep(); }, 'kind-choice');
+    choice.append(el('strong', '', name), el('span', 'muted', hint)); options.append(choice);
+  }
+  screen.body.append(options);
+  screen.actions.append(button('Back to collection', () => showLibrary()), button('Enter details myself', () => openCatalog(), 'plain-button'));
+}
+function photoStep() {
+  const screen = flowScreen(1, `Photograph your ${flow.kind === 'Amiibo' ? 'Amiibo' : 'item'}`, flow.kind === 'Amiibo' ? 'Show the character, pose and base. A second picture of the packaging can help distinguish versions.' : 'Start with the front. Add the back, label or barcode if it helps identify the edition.');
+  const files = el('input'); files.type = 'file'; files.multiple = true; files.accept = 'image/jpeg,image/png,image/gif'; files.hidden = true; files.setAttribute('aria-label', 'Choose item photos');
+  const camera = el('input'); camera.type = 'file'; camera.accept = 'image/*'; camera.setAttribute('capture', 'environment'); camera.hidden = true;
+  const photos = el('div', 'capture-strip'), status = el('p', 'flow-status'); status.setAttribute('role', 'status');
+  const next = button('Find this item →', uploadDraft, '');
+  const render = () => {
+    photos.replaceChildren(); next.disabled = !flow.photos.length;
+    for (const [index, p] of flow.photos.entries()) {
+      const box = el('div', 'capture-thumb'), image = el('img'); image.src = p.url; image.alt = p.file.name;
+      box.append(image, button('Remove', () => { URL.revokeObjectURL(p.url); flow.photos.splice(index, 1); render(); }, 'plain-button')); photos.append(box);
+    }
+  };
+  const add = input => {
+    for (const file of Array.from(input.files || [])) {
+      if (flow.photos.length >= 8) { status.textContent = 'Use up to eight photos of one item.'; break; }
+      if (file.size > 12 * 1024 * 1024) { status.textContent = 'Each photo needs to be under 12 MB.'; continue; }
+      flow.photos.push({ file, url: URL.createObjectURL(file) });
+    }
+    input.value = ''; render();
+  };
+  files.onchange = () => add(files); camera.onchange = () => add(camera);
+  const capture = el('div', 'capture-options'); capture.append(button('Take a photo', () => camera.click(), '', 'camera'), button('Choose photos', () => files.click(), 'secondary', 'photo'), files, camera);
+  const clue = el('details', 'optional-clue'); clue.append(el('summary', '', 'Add a clue (optional)'));
+  const text = el('textarea'); text.rows = 2; text.placeholder = 'A name, series, edition or anything Remy should check'; text.value = flow.text; text.oninput = () => flow.text = text.value; clue.append(text);
+  screen.body.append(capture, photos, clue, status);
+  screen.actions.append(button('← Change type', () => typeStep()), next); render();
+  async function uploadDraft() {
+    next.disabled = true; status.textContent = 'Saving your photos…';
+    const body = new FormData(); body.append('category', flow.kind); body.append('text', flow.text); flow.photos.forEach(p => body.append('images', p.file));
+    try { const job = await api('/api/intake', { method: 'POST', body }); releaseDraft(); flow.photos = []; await openIdentification(job.id); }
+    catch (e) { flowError(status, e); next.disabled = false; }
+  }
 }
 async function showIntake() {
- if(activeController)return;setWorkspace('intake');++libraryGeneration;stage.replaceChildren();const toolbar=el('div','intake-toolbar');toolbar.append(button('Photograph another item',()=>showCapture(),'','camera'));
- const filter=el('select');filter.setAttribute('aria-label','Queue filter');for(const [v,label] of [['active','Processing & ready for review'],['review','Ready for review'],['all','All identifications']]){const o=el('option','',label);o.value=v;o.selected=v===intakeFilter;filter.append(o)};
- const list=el('div');filter.onchange=()=>{intakeFilter=filter.value;refreshIntakeList(list)};toolbar.append(filter,button('Enrich existing collection',()=>openEnrichment()),button('Search cached knowledge',()=>openGraphSearch()));stage.append(toolbar,el('p','muted','Identification is useful on its own. Check ownership, keep a search result, or approve an inventory change when you are ready.'),list);await refreshIntakeList(list);pollIntake(list);
+  const screen = flowScreen(-1, 'Pending items', 'Pick up where you left off, or photograph another item.');
+  screen.root.querySelector('.flow-progress').hidden = true;
+  document.querySelector('.library-heading h1').textContent = 'Pending items';
+  screen.actions.append(button('Back to collection', () => showLibrary()), button('Add an item', () => showCapture(), ''));
+  const list = el('div', 'pending-list'); screen.body.append(list); let page = 0;
+  async function refresh() {
+    try {
+      const data = await api('/api/intake'); if (screen.epoch !== flowEpoch) return;
+      const jobs = (data.jobs || []).filter(j => ['queued', 'processing', 'review', 'failed'].includes(j.state));
+      list.replaceChildren();
+      if (!jobs.length) list.append(el('p', 'empty', 'Everything is up to date.'));
+      for (const j of jobs.slice(page * 6, page * 6 + 6)) {
+        const row = button('', () => openIdentification(j.id), 'pending-row');
+        const p = j.photos?.[0]; if (p) { const image = el('img'); image.src = `/api/intake/${j.id}/photos/${p.id}/thumbnail`; image.alt = ''; row.append(image); }
+        const info = el('span'); info.append(el('strong', '', j.result?.title || j.input?.text?.split('\n')[0] || j.category || 'Photographed item'), el('small', '', j.state === 'review' ? 'Ready to check →' : j.state === 'failed' ? 'Needs another try →' : 'Remy is identifying it…')); row.append(info); list.append(row);
+      }
+      if (jobs.length > 6) { const nav = el('div', 'actions'); const prev = button('Previous', () => { page--; refresh(); }); prev.disabled = !page; const next = button('Next', () => { page++; refresh(); }); next.disabled = (page + 1) * 6 >= jobs.length; nav.append(prev, el('span', 'muted', `${page + 1} / ${Math.ceil(jobs.length / 6)}`), next); list.append(nav); }
+      flowTimer = setTimeout(refresh, 5000);
+    } catch (e) { flowError(list, e); }
+  }
+  refresh();
 }
-function pollIntake(host){clearTimeout(intakePoll);intakePoll=setTimeout(async()=>{if(workspaceMode!=='intake'||!host.isConnected)return;await refreshIntakeList(host);pollIntake(host)},5000)}
-async function refreshIntakeList(host){try{const data=await api('/api/intake');if(!host.isConnected)return;host.replaceChildren();if(!data.worker_enabled)host.append(el('p','configuration-warning','Background worker is disabled. Jobs will remain queued until a worker starts.'));
- const jobs=data.jobs||[];const counts=el('div','queue-counts');for(const [key,label] of [['queued','Queued'],['processing','Researching'],['review','Ready for review'],['failed','Needs retry']])counts.append(el('span','tag',`${jobs.filter(j=>j.state===key).length} ${label}`));host.append(counts);
- const visible=jobs.filter(j=>intakeFilter==='all'||(intakeFilter==='review'?j.state==='review':['queued','processing','review','failed'].includes(j.state)));
- if(!visible.length)host.append(el('p','empty','Your queue is clear. Photograph an object or enrich an existing item.'));
- for(const job of visible){const card=el('article','intake-job');const photos=el('div','queue-photo');if(job.photos?.length){const img=el('img');img.src=`/api/intake/${job.id}/photos/${job.photos[0].id}/thumbnail`;img.alt='Uploaded object';photos.append(img)}else photos.append(icon('box'));const info=el('div');info.append(el('h3','',job.result?.title||job.input?.text?.split('\n')[0]||job.category||'Photographed object'),el('p','muted',`${job.category||'Uncategorized'} · ${job.item_id?'Existing collection':'Identification'} · ${new Date(job.created_at).toLocaleString()}`),el('span',`job-state ${job.state}`,job.state==='review'?'Ready for review':job.state));if(job.error)info.append(el('p','muted',job.error));const actions=el('div');actions.append(button(job.state==='review'?'Review result':'View',()=>openIdentification(job.id),job.state==='review'?'':'secondary'));card.append(photos,info,actions);host.append(card)}
- }catch(e){intakeError(host,e)}}
-function knowledgeValue(value){if(Array.isArray(value))return value.map(knowledgeValue).join(' · ');if(value&&typeof value==='object'){if(value.time){const date=value.time.replace(/^\+/, '').split('T')[0];return value.precision===9?date.slice(0,4):value.precision===10?date.slice(0,7):date;}if(value.id)return value.id;return Object.entries(value).map(([k,v])=>`${k}: ${knowledgeValue(v)}`).join(', ')}return String(value??'')}
-function graphView(graph){const section=el('section','source-graph');for(const warning of graph.warnings||[])section.append(el('p','configuration-warning',warning));const labels=new Map((graph.entities||[]).map(e=>[`${e.provider}:${e.kind}:${e.id}`,e.label||e.id]));const key=r=>`${r.provider}:${r.kind}:${r.id}`;
- for(const e of graph.entities||[]){const row=el('div','canonical-node');row.append(sourceLink(e),el('span','tag',e.kind),el('p','muted',e.description||''));const fields=el('dl','details');for(const [name,value] of Object.entries(e.fields||{})){if(value!==null&&value!==''&&!(Array.isArray(value)&&!value.length))appendDetail(fields,name.replaceAll('_',' '),knowledgeValue(value));}row.append(fields,el('small','muted',`${e.provider} · ${e.license} · retrieved ${new Date(e.retrieved_at).toLocaleDateString()}`));section.append(row)}
- const relationships=el('details');relationships.append(el('summary','',`${(graph.edges||[]).length} source relationships`));for(const e of graph.edges||[])relationships.append(el('p','',`${labels.get(key(e.from))||e.from.id} → ${e.relation.replaceAll('_',' ')} → ${labels.get(key(e.to))||e.to.id} (${e.evidence})`));section.append(relationships);if(graph.truncated)section.append(el('p','muted','Traversal limit reached; this is a bounded view of the source graph.'));return section;
+async function openIdentification(id) {
+  clearTimeout(flowTimer); rememberJob(id);
+  const screen = flowScreen(2, 'Remy is identifying your item', 'Your photos are saved. You can leave this screen and come back later.');
+  let job;
+  try { job = await api(`/api/intake/${id}?compact=1`); } catch (e) { flowError(screen.body, e); return; }
+  if (screen.epoch !== flowEpoch) return;
+  if(flow.job?.id!==job.id)delete flow.customTitle;
+ flow.job = job; flow.kind = job.category; flow.cards = []; flow.selected = [];
+ document.querySelector('.library-heading h1').textContent=job.item_id?'Find item details':'Add to your collection';
+  if (job.state === 'approved') return savedStep(job);
+  if (job.state === 'review') return matchStep(job);
+  if (['rejected', 'search_only'].includes(job.state)) {
+    screen.body.append(jobPhoto(job), el('p', '', job.state === 'search_only' ? 'Kept as an identification without adding another owned item.' : 'This identification was discarded.'));
+  } else if (job.state === 'failed') {
+    screen.body.append(el('p', '', 'Remy could not finish identifying this item. Your photos are saved.'), button('Try again', () => jobAction(job, 'retry')));
+  } else {
+    screen.body.append(jobPhoto(job), el('div', 'working-indicator', 'Checking the photo and looking for the right catalogue record…'));
+    flowTimer = setTimeout(() => openIdentification(id), 3500);
+  }
+  screen.actions.append(button('Pending items', () => showIntake()), button('Photograph another', () => showCapture(job.category), ''));
 }
-async function openIdentification(id){
- try{const job=await api(`/api/intake/${id}`);const body=el('div','identification-review');catalogModal.replaceChildren(dialogHeader(job.result?.title||'Identification'));catalogModal.append(body);if(!catalogModal.open)catalogModal.showModal();
- const photos=el('div','intake-photos');for(const p of job.photos||[]){const a=el('a');a.href=`/api/intake/${id}/photos/${p.id}/original`;a.target='_blank';const img=el('img');img.src=`/api/intake/${id}/photos/${p.id}/thumbnail`;img.alt=p.filename;a.append(img);photos.append(a)};body.append(photos,el('p','',job.result?.notes||job.error||`Status: ${job.state}`));
- if(job.result?.inferred&&Object.keys(job.result.inferred).length){const inferred=el('details');inferred.append(el('summary','','Remy’s inferred clues · unverified'));const dl=el('dl','details');for(const [k,v]of Object.entries(job.result.inferred))appendDetail(dl,k.replaceAll('_',' '),typeof v==='object'?JSON.stringify(v):String(v));inferred.append(dl);body.append(inferred)}
- for(const warning of job.result?.warnings||[])body.append(el('p','configuration-warning',warning));
- body.append(el('p','muted',`Identification outcome: ${(job.result?.outcome||'needs review').replaceAll('_',' ')}`));
- const selections=[];for(const [index,match]of (job.result?.matches||[]).entries()){const card=el('section','match-card');const check=el('input');check.type='checkbox';check.disabled=job.state!=='review'||match.confidence==='rejected';selections.push(check);const label=el('label','match-choice');label.append(check,el('strong','',match.candidate.label),el('span','tag',match.confidence||'partial'),el('span','tag',match.role==='component'?'Contained work':'Alternative match'));card.append(label,el('p','',match.candidate.description||''),el('p','',match.reason||''));const detail=el('details');detail.append(el('summary','',`Cached metadata & relationships · ${match.candidate.provider}`),graphView(match.graph));card.append(detail);body.append(card)}
- if(!(job.result?.matches||[]).length&&job.state==='review')body.append(el('p','muted','No verified external match. Search below, retry with better evidence, or add a manually described item.'));
- const ownership=el('section','ownership-results');ownership.append(el('h3','','Already in your collection?'),el('p','muted','Checking cached relationships and original descriptions…'));body.append(ownership);
- api(`/api/intake/${id}/ownership`).then(data=>{ownership.replaceChildren(el('h3','','Already in your collection?'));for(const o of data.ownership||[])ownership.append(button(`${o.item.title} · ${o.basis} · via ${o.via}`,()=>{catalogModal.close();openCatalog(o.item)},'secondary'));if(!data.ownership?.length)ownership.append(el('p','muted','No related ownership found in cached knowledge or matching descriptions. Unenriched inventory may still contain this work.'))}).catch(e=>intakeError(ownership,e));
- const status=el('p','muted');if(job.state==='review'){
- const title=el('input');title.value=job.result?.title||'';const tags=el('input');tags.value=job.category||'';if(!job.item_id)body.append(labeled('Owned item title · optional',title),labeled('Owned item tags · comma separated',tags));else body.append(el('p','muted','Approval adds selected canonical associations to this existing item. Your original fields and tags are preserved.'));
- const proposalButton=button(job.item_id?'Review enrichment proposal':'Review add-to-inventory proposal',async()=>{proposalButton.disabled=true;try{const selected=selections.flatMap((c,i)=>c.checked?[i]:[]);const p=await api(`/api/intake/${id}/proposal`,{method:'POST',body:JSON.stringify({selected,title:title.value,tags:tags.value.split(',').map(s=>s.trim()).filter(Boolean),attributes:title.value?{title:title.value}:{}})});selections.forEach(c=>c.disabled=true);title.disabled=true;tags.disabled=true;const confirm=el('section','approval-confirm');confirm.append(el('h3','','Confirm this change'),el('p','',job.item_id?`Associate ${selected.length} selected canonical entities with the existing item.`:`Create one owned item “${title.value||'Untitled'}”, attach ${job.photos.length} photos, and associate ${selected.length} selected canonical entities.`),el('p','muted','External source metadata stays separate from your personal fields. A work match does not verify a retail edition.'));
- confirm.append(el('p','',`Selected matches: ${selected.map(i=>job.result.matches[i].candidate.label).join('; ')||'None'}`));confirm.append(button('Approve this proposal',async()=>{try{await api(`/api/proposals/${p.id}/decision`,{method:'POST',body:JSON.stringify({approve:true})});await loadLibraryMeta();await openIdentification(id)}catch(e){intakeError(status,e)}}),button('Reject this proposal',async()=>{await api(`/api/proposals/${p.id}/decision`,{method:'POST',body:JSON.stringify({approve:false})});confirm.remove();proposalButton.disabled=false;selections.forEach((c,i)=>c.disabled=job.result.matches[i].confidence==='rejected');title.disabled=false;tags.disabled=false}));body.append(confirm);confirm.scrollIntoView({block:'nearest'});}catch(e){intakeError(status,e);proposalButton.disabled=false}});
- api('/api/proposals?limit=100').then(data=>{const pending=(data.proposals||[]).find(p=>p.type==='identification_link'&&p.proposed_payload.job_id===id);if(!pending)return;proposalButton.disabled=true;const saved=el('section','approval-confirm');saved.append(el('h3','','Saved pending proposal'),el('p','',pending.proposed_payload.title||'Enrich the existing item'),el('p','',`Selected matches: ${(pending.proposed_payload.selected||[]).map(i=>job.result.matches[i]?.candidate.label||'Result changed; reject and review again').join('; ')||'None'}`),button('Approve saved proposal',async()=>{try{await api(`/api/proposals/${pending.id}/decision`,{method:'POST',body:JSON.stringify({approve:true})});await openIdentification(id)}catch(e){intakeError(status,e)}}),button('Reject saved proposal',async()=>{await api(`/api/proposals/${pending.id}/decision`,{method:'POST',body:JSON.stringify({approve:false})});await openIdentification(id)}));body.append(saved);}).catch(e=>intakeError(status,e));
- body.append(proposalButton,button('Keep for search only',async()=>{await api(`/api/intake/${id}/action`,{method:'POST',body:JSON.stringify({action:'search_only'})});await openIdentification(id)}));
- const search=el('details');search.append(el('summary','','Find a different match or another contained work'));const provider=el('select');for(const name of ['musicbrainz','wikidata']){const o=el('option','',name);o.value=name;provider.append(o)};const query=el('input');query.placeholder='Title, artist, barcode or model';const results=el('div');search.append(provider,query,button('Search authority',async()=>{try{const data=await api(`/api/authorities/search?provider=${provider.value}&q=${encodeURIComponent(query.value)}`);results.replaceChildren();for(const c of data.candidates||[])results.append(button(`${c.label} · ${c.description}`,async()=>{status.textContent='Resolving and caching source metadata…';try{await api(`/api/intake/${id}/resolve`,{method:'POST',body:JSON.stringify({provider:c.provider,kind:c.kind,id:c.id})});await openIdentification(id)}catch(e){intakeError(status,e)}}));if(!data.candidates?.length)results.append(el('p','','No results. Try another spelling or identifier.'))}catch(e){intakeError(results,e)}}),results);body.append(search);
- }
- if(['review','failed','rejected','search_only'].includes(job.state))body.append(button('Retry identification',async()=>{await api(`/api/intake/${id}/action`,{method:'POST',body:JSON.stringify({action:'retry'})});catalogModal.close();showIntake()}));
- if(['review','failed','queued'].includes(job.state))body.append(button('Discard identification',async()=>{await api(`/api/intake/${id}/action`,{method:'POST',body:JSON.stringify({action:'reject'})});catalogModal.close();showIntake()},'danger'));
- if(job.item_id)body.append(button('Open owned item',async()=>{const data=await api(`/api/items/${job.item_id}`);catalogModal.close();openCatalog(data.item||data)}));body.append(status);
- }catch(e){renderError(e)}
+async function matchStep(job) {
+  const screen = flowScreen(2, 'Is this the right item?', 'Check the version before saving it to your collection.');
+  screen.body.append(el('p', 'muted', 'Preparing a short review…'));
+  let cards;
+  try { cards = (await api(`/api/intake/${job.id}/cards`)).cards || []; } catch (e) { flowError(screen.body, e); return; }
+  if (screen.epoch !== flowEpoch) return;
+  flow.job = job; flow.cards = cards;
+  const rank={confident:0,partial:1,ambiguous:2,rejected:3};
+ const available = (job.result.matches || []).map((m, index) => ({ ...m, index })).sort((a,b)=>(rank[a.confidence]??2)-(rank[b.confidence]??2));
+  const parts = available.length > 1 && available.every(m => m.role === 'component');
+  if (!available.length) {
+    screen.body.replaceChildren(jobPhoto(job), el('p', '', 'I couldn’t confirm a catalogue match yet. Try a clearer view of the base, label or packaging, or search by name.'));
+    screen.actions.append(button('Try again', () => jobAction(job, 'retry')), button('Search by name', () => searchStep(job), ''));
+    if(!job.item_id) screen.body.append(button('Enter a name and save without a match', () => { flow.selected = []; saveStep(job); }, 'plain-button'));
+  } else if (parts) {
+    screen.root.querySelector('h2').textContent = 'Check what is inside';
+    const layout = el('div', 'match-layout'), contents = el('section', 'identity-card');
+    contents.append(el('h3', '', job.result.title), el('p', 'muted', 'These are the works inside your set. The retail edition may still be unknown.'));
+    const selected = new Set(available.map(m => m.index));
+    for (const m of available) { const card = cards[m.index]; const label = el('label', 'contained-choice'), check = el('input'); check.type = 'checkbox'; check.checked = true; check.onchange = () => check.checked ? selected.add(m.index) : selected.delete(m.index); label.append(check, el('span', '', card?.title || m.candidate.label)); contents.append(label); }
+    layout.append(jobPhoto(job), contents); screen.body.replaceChildren(layout);
+    screen.actions.append(button('Search for another title', () => searchStep(job)), button('Review and save →', () => { flow.selected = [...selected]; saveStep(job); }, ''));
+  } else {
+    let option = 0;
+    function render() {
+      const m = available[option], card = cards[m.index] || { title: m.candidate.label, facts: [], source: m.candidate.provider, url: m.candidate.uri };
+      const layout = el('div', 'match-layout'), detail = factCard(card);
+      const label = { confident: 'Looks like a match', partial: 'Please check the version', ambiguous: 'Several versions look similar', rejected: 'Another version you can choose' }[m.confidence] || 'Please check this match';
+      detail.prepend(el('p', 'match-certainty', label));
+      if(m.confidence==='rejected')detail.append(el('p','match-explanation','Remy suggested another version, but you can choose this one if it matches your item.'));
+ else if (m.reason) detail.append(el('p', 'match-explanation', m.reason.length > 180 ? m.reason.slice(0, 177) + '…' : m.reason));
+      if (available.length > 1) { const choices = el('div', 'variant-controls'), prev = button('←', () => { option--; render(); }), next = button('→', () => { option++; render(); }); prev.setAttribute('aria-label', 'Previous version'); next.setAttribute('aria-label', 'Next version'); prev.disabled = !option; next.disabled = option === available.length - 1; choices.append(prev, el('span', '', `Version ${option + 1} of ${available.length}`), next); detail.append(choices); }
+      layout.append(jobPhoto(job), detail); screen.body.replaceChildren(layout); screen.actions.replaceChildren(button('Find a different match', () => searchStep(job)), button('Use this match →', () => { flow.selected = [m.index]; saveStep(job); }, ''));
+      ownershipNote(job, screen.body, screen.epoch);
+    }
+    render();
+  }
+  screen.body.append(button('Discard this identification', () => jobAction(job, 'reject'), 'plain-button quiet-action'));
 }
-async function openEnrichment(){catalogModal.replaceChildren(dialogHeader('Enrich the existing collection'));const tag=el('input');tag.value='Vinyl Records';const count=el('input');count.type='number';count.min=1;count.max=100;count.value=10;const status=el('p');catalogModal.append(el('p','','Queue existing items for the same photo and authority research. Each result needs review; original values are preserved.'),labeled('Exact existing tag · blank for all',tag),labeled('Maximum items',count),button('Queue enrichment',async()=>{try{const data=await api('/api/intake/enrich',{method:'POST',body:JSON.stringify({tag:tag.value,limit:Number(count.value)})});status.textContent=`Queued ${data.jobs.length} items. Active jobs were skipped.`;showIntake()}catch(e){intakeError(status,e)}}),status);if(!catalogModal.open)catalogModal.showModal()}
-async function openGraphSearch(){setWorkspace('intake');stage.replaceChildren(el('h2','','Search cached knowledge'));const form=el('form','intake-toolbar');const query=el('input');query.placeholder='Film, album, artist, series, platform…';const year=el('input');year.placeholder='Original year';year.pattern='[0-9]{4}';const kind=el('input');kind.placeholder='Type, e.g. film';const submit=el('button','','Search');submit.type='submit';form.append(labeled('Knowledge text',query),labeled('Entity type',kind),labeled('Original year',year),submit);const out=el('div');stage.append(form,out);form.onsubmit=async e=>{e.preventDefault();try{const data=await api(`/api/canonical/search?q=${encodeURIComponent(query.value)}&kind=${encodeURIComponent(kind.value)}&year=${encodeURIComponent(year.value)}`);out.replaceChildren(el('p','muted',`${data.items.length} owned items found through cached canonical relationships. Up to 100 results.`));for(const item of data.items)out.append(button(item.title,()=>openCatalog(item)));}catch(error){intakeError(out,error)}}}
-
-// Inventory and authority detail remain separate, connected by approved links.
-const originalItemDetail = itemDetail;
+async function ownershipNote(job, host, epoch) {
+  const note = el('div', 'ownership-note'); host.append(note);
+  try {
+    const data = await api(`/api/intake/${job.id}/ownership`); if (epoch !== flowEpoch || !note.isConnected) return;
+    const seen = new Set(); const owned = (data.ownership || []).filter(o => { if (seen.has(o.item.id)) return false; seen.add(o.item.id); return true; });
+    if (owned.length) { note.append(el('strong', '', 'You may already own this'), el('p', '', owned.slice(0, 2).map(o => o.item.title).join(' · '))); if (!job.item_id) note.append(button('Keep this as a search only', () => jobAction(job, 'search_only'), 'plain-button')); }
+  } catch (_) { /* Ownership hints must not prevent reviewing the identity. */ }
+}
+function saveStep(job) {
+  const screen = flowScreen(3, job.item_id ? 'Save these details?' : 'Add this to your collection?', job.item_id ? 'Your personal notes and photos stay with the item. The selected catalogue records will be linked to it.' : 'Your photo and the selected catalogue match will be kept together.');
+  const title = el('input'); const chosen=flow.cards[flow.selected[0]];
+ const suggested=/amiibo/i.test(job.category)&&chosen?`${chosen.title}${chosen.subtitle?' — '+chosen.subtitle:''} amiibo`:job.result.title||chosen?.title||'';
+ title.value = flow.customTitle ?? suggested;title.oninput=()=>flow.customTitle=title.value; title.setAttribute('aria-label', 'Item name');
+  const layout = el('div', 'match-layout'), detail = el('section', 'identity-card');
+  if (job.item_id) detail.append(el('h3', '', job.input.text.split('\n')[0] || job.result.title)); else detail.append(labeled('Name in your collection', title));
+  if (!flow.selected.length) detail.append(el('p', 'muted', 'No external catalogue record will be linked yet.'));
+  for (const index of flow.selected) { const c = flow.cards[index]; if (!c) continue; detail.append(el('p', 'save-match-name', c.title));if(c.subtitle)detail.append(el('p','identity-subtitle',c.subtitle));detail.append(sourceLink(c)); }
+  layout.append(jobPhoto(job), detail); screen.body.append(layout);
+  const status = el('p', 'flow-status'); status.setAttribute('role', 'status'); screen.body.append(status);
+  const save = button(job.item_id ? 'Save match' : 'Add to my inventory', async () => {
+    save.disabled = true; status.textContent = 'Saving…';
+    try {
+      // This click explicitly confirms the concrete selection shown on this step.
+      const pending = (await api('/api/proposals?limit=100')).proposals || [];
+      for (const p of pending.filter(p => p.type === 'identification_link' && p.proposed_payload.job_id === job.id)) await api(`/api/proposals/${p.id}/decision`, { method: 'POST', body: JSON.stringify({ approve: false, reason: 'Superseded by the reviewed selection.' }) });
+      const payload = { confirm_alternative:flow.selected.some(index=>job.result.matches[index].confidence==='rejected'), selected: flow.selected, title: title.value, tags: [job.category || 'Other'], attributes: title.value ? { title: title.value } : {} };
+      const proposal = await api(`/api/intake/${job.id}/proposal`, { method: 'POST', body: JSON.stringify(payload) });
+      await api(`/api/proposals/${proposal.id}/decision`, { method: 'POST', body: JSON.stringify({ approve: true }) });
+      await loadLibraryMeta(); const saved = await api(`/api/intake/${job.id}?compact=1`); flow.savedTitle=job.item_id?job.input.text.split('\n')[0]:title.value; savedStep(saved);
+    } catch (e) { try {const current=await api(`/api/intake/${job.id}?compact=1`);if(current.state==='approved'){savedStep(current);return}}catch(_){} flowError(status, e); save.disabled = false; }
+  }, '');
+  screen.actions.append(button('← Back to match', () => matchStep(job)), save);
+}
+function savedStep(job) {
+  const screen = flowScreen(3, 'Saved to your collection', 'Your item is saved. View it, or photograph the next one.');
+  const name=el('h3','',flow.savedTitle||'Your item');screen.body.append(jobPhoto(job),name);
+ api(`/api/items/${job.item_id}`).then(data=>{if(name.isConnected)name.textContent=(data.item||data).title||'Your item'}).catch(()=>{});
+  screen.actions.append(button('View item', async () => { const item = await api(`/api/items/${job.item_id}`); setWorkspace('collection'); openItemDetail(item.item || item, {}); }), button(`Add another ${job.category === 'Amiibo' ? 'Amiibo' : 'item'}`, () => showCapture(job.category), ''));
+}
+async function jobAction(job, action) { try { await api(`/api/intake/${job.id}/action`, { method: 'POST', body: JSON.stringify({ action }) }); if (action === 'retry') openIdentification(job.id); else showIntake(); } catch (e) { renderError(e); } }
+function searchStep(job) {
+  const screen = flowScreen(2, 'Find the right catalogue record', 'Search by the character or title. Choose the specific version that matches your photo.');
+  const form = el('form', 'match-search'), provider = el('select'), query = el('input'); provider.setAttribute('aria-label', 'Catalogue'); query.setAttribute('aria-label', 'Character or title'); query.placeholder = 'For example, Mario or Link';
+  const names = [['amiibo', 'Amiibo catalogue'], ['musicbrainz', 'Music releases'], ['wikidata', 'Films, games and more']];
+  names.forEach(([value, label]) => { const option = el('option', '', label); option.value = value; provider.append(option); });
+  provider.value = /amiibo/i.test(job.category) ? 'amiibo' : /vinyl|music|record/i.test(job.category) ? 'musicbrainz' : 'wikidata';
+  const submit = el('button', '', 'Search'); submit.type = 'submit'; form.append(provider, query, submit); const results = el('div', 'search-options'); screen.body.append(form, results);
+  form.onsubmit = async event => {
+    event.preventDefault(); submit.disabled = true; results.replaceChildren(el('p', 'muted', 'Searching…'));
+    try { const data = await api(`/api/authorities/search?provider=${provider.value}&q=${encodeURIComponent(query.value)}`); if (screen.epoch !== flowEpoch) return; results.replaceChildren(); for (const c of (data.candidates || []).slice(0, 8)) { const choice = button('', async () => { results.replaceChildren(el('p', 'muted', 'Checking that record…')); try { await api(`/api/intake/${job.id}/resolve`, { method: 'POST', body: JSON.stringify({ provider: c.provider, kind: c.kind, id: c.id }) }); openIdentification(job.id); } catch (e) { flowError(results, e); } }, 'search-option'); choice.append(el('strong', '', c.label), el('small', '', c.description)); results.append(choice); } if (!data.candidates?.length) results.append(el('p', '', 'No matches. Try just the character or title, without the year or format.')); }
+    catch (e) { flowError(results, e); } finally { submit.disabled = false; }
+  };
+  screen.actions.append(button('← Back', () => matchStep(job)));
+}
+async function openEnrichment() {
+  const screen = flowScreen(2, 'Find details for existing items', 'Choose an item in your collection and use “Find a match”. Each result is reviewed in the same short workflow.');
+  screen.actions.append(button('Open collection', () => showLibrary(), ''));
+}
+async function researchItem(item) {
+  flow.job={item_id:item.id};
+ const screen = flowScreen(2, 'Starting identification', item.title);
+  try { const data = await api('/api/intake/enrich', { method: 'POST', body: JSON.stringify({ item_id: item.id }) }); openIdentification(data.jobs[0].id); }
+  catch (e) { flowError(screen.body, e); }
+}
+// Inventory detail prioritises curated identity. Personal editing stays available.
 itemDetail = function(data) {
- const card=originalItemDetail(data);const section=el('section','canonical-associations');section.append(el('h3','','Associated knowledge'));card.append(section);
- section.append(button('Research this existing item',async()=>{try{await api('/api/intake/enrich',{method:'POST',body:JSON.stringify({item_id:data.item.id})});showIntake()}catch(e){section.append(el('p','',e.message))}}));
- api(`/api/items/${data.item.id}/canonical`).then(result=>{if(!result.links.length)section.append(el('p','muted','No approved canonical associations yet.'));for(const link of result.links)section.append(button(`${link.label} · ${link.provider} · ${link.relation.replaceAll('_',' ')}`,()=>openCanonical(link.id)))}).catch(e=>section.append(el('p','muted',e.message)));return card;
+  const item = data.item || {}, card = el('article', 'curated-item');
+  card.append(el('h2', '', item.title || 'Your item'));
+  const layout = el('div', 'match-layout'), photo = el('div', 'flow-picture'), information = el('div');
+  if (item.images?.length) { const p = item.images.find(p => p.is_primary) || item.images[0], image = el('img'); image.src = p.original_url || `/api/images/${p.id}/original`; image.alt = item.title; image.onclick = () => showItemImage(item.title, image.src); photo.append(image); }
+  layout.append(photo, information); card.append(layout); information.append(el('p', 'muted', 'Loading the linked identity…'));
+  api(`/api/items/${item.id}/cards`).then(data => {
+    information.replaceChildren(); const cards = data.cards || [];
+    if (!cards.length) information.append(el('p', '', 'Link this item to a catalogue record to fill in its details.'), button('Find a match', () => researchItem(item), ''));
+    else if (cards.length === 1) information.append(factCard(cards[0]));
+    else { information.append(el('h3', '', 'In this collection')); for (const c of cards) information.append(button(c.title + (c.facts.find(f => f.label === 'Original release')?.value ? ` · ${c.facts.find(f => f.label === 'Original release').value.slice(0,4)}` : ''), () => openCanonical(c.entity_id), 'contained-link')); }
+    const notes = el('details', 'personal-notes'); notes.append(el('summary', '', 'Your notes and organization'));
+    const dl = el('dl', 'identity-facts'); for (const [key, value] of Object.entries(item.attributes || {})) if (key !== 'title') appendAttributeDetail(dl, key, value); notes.append(dl, el('p', 'muted', (item.tags || []).join(' · '))); information.append(notes);
+    const actions = el('div', 'actions'); actions.append(button('Edit my details', () => openCatalog(item)), button(cards.length ? 'Improve this match' : 'Back to collection', () => cards.length ? researchItem(item) : showLibrary(), 'plain-button')); information.append(actions);
+  }).catch(e => flowError(information, e));
+  return card;
 };
-async function openCanonical(id){try{const d=await api(`/api/canonical/${id}`);const root=d.graph.entities.find(e=>e.provider===d.graph.root.provider&&e.id===d.graph.root.id);catalogModal.replaceChildren(dialogHeader(root?.label||'Canonical entity'),el('p','muted','Cached source knowledge. Your owned item and its personal fields remain separate.'),graphView(d.graph),el('h3','','Owned items containing or identifying this entity'));for(const item of d.owners||[])catalogModal.append(button(item.title,()=>{catalogModal.close();openItemDetail(item,{})}));if(!d.owners?.length)catalogModal.append(el('p','muted','No approved ownership links.'));if(!catalogModal.open)catalogModal.showModal()}catch(e){renderError(e)}}
-const originalProposalCard=proposalCard;
-proposalCard=function(proposal,title){if(proposal.type!=='identification_link')return originalProposalCard(proposal,title);const card=el('article','card');card.append(el('h3','','Identification proposal'),el('p','',proposal.proposed_payload.title||'Enrich an existing owned item'),el('p','muted',`${proposal.proposed_payload.selected?.length||0} selected canonical associations · ${proposal.status}`),button('Review identification and provenance',()=>openIdentification(proposal.proposed_payload.job_id)));return card};
+async function openCanonical(id) {
+  try { const data = await api(`/api/canonical/${id}/card`); setWorkspace('collection'); stage.replaceChildren(factCard(data.card)); const owners = el('div', 'actions'); for (const item of data.owners || []) owners.append(button(`View ${item.title}`, () => openItemDetail(item, {}))); stage.append(owners); }
+  catch (e) { renderError(e); }
+}
+const baseProposalCard = proposalCard;
+proposalCard = function(p, title) { if (p.type !== 'identification_link') return baseProposalCard(p, title); const card = el('article', 'card'); card.append(el('h3', '', p.proposed_payload.title || 'Check an item match'), button('Review match', () => openIdentification(p.proposed_payload.job_id), '')); return card; };
+const resumeJob = new URLSearchParams(location.search).get('identify');
+if (resumeJob) Promise.resolve().then(() => openIdentification(resumeJob));

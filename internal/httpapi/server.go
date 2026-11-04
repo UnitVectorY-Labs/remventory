@@ -47,6 +47,9 @@ func New(opts Options) http.Handler {
 	}
 
 	mux.HandleFunc("GET /healthz", api.health)
+	mux.HandleFunc("GET /api/intake/{id}/cards", api.withToken(api.identificationCards))
+	mux.HandleFunc("GET /api/items/{id}/cards", api.withToken(api.itemCards))
+	mux.HandleFunc("GET /api/canonical/{id}/card", api.withToken(api.canonicalCard))
 	mux.HandleFunc("GET /api/intake", api.withToken(api.listIdentifications))
 	mux.HandleFunc("POST /api/intake", api.withToken(api.createIdentification))
 	mux.HandleFunc("POST /api/intake/enrich", api.withToken(api.enrichCollection))

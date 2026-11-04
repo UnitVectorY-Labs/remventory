@@ -250,3 +250,69 @@ func TestPartialItemUpdatesPreserveOmittedFields(t *testing.T) {
 		t.Fatal("stale proposal overwrote a newer edit")
 	}
 }
+
+func TestCuratedPresentationCache(t *testing.T) {
+	s := canonicalTestStore(t)
+	ctx := context.Background()
+	ref := authority.Ref{Provider: "amiibo", Kind: "figure", ID: "0000000000000002"}
+	g := authority.Graph{Root: ref, Association: "identified_as", Entities: []authority.Entity{{Ref: ref, Label: "Mario", Fields: map[string]any{"character": "Mario", "amiibo_series": "Super Smash Bros."}, License: "MIT", RetrievedAt: time.Now()}}}
+	if err := s.CacheGraph(ctx, g); err != nil {
+		t.Fatal(err)
+	}
+	p := authority.DisplayPlan{Layout: "identity", Fields: []string{"amiibo_series", "character", "invented"}}
+	if err := s.SaveDisplay(ctx, g, p, "test-model"); err != nil {
+		t.Fatal(err)
+	}
+	saved, found, err := s.Display(ctx, g)
+	if err != nil || !found || len(saved.Fields) != 2 {
+		t.Fatal("curation not cached/validated", saved, found, err)
+	}
+	if err := s.SaveDisplay(ctx, g, authority.DisplayPlan{Fields: []string{"character"}}, "second-model"); err != nil {
+		t.Fatal(err)
+	}
+	saved, _, _ = s.Display(ctx, g)
+	if len(saved.Fields) != 2 {
+		t.Fatal("unchanged source unnecessarily changed the cached presentation")
+	}
+	g.Entities[0].Fields["amiibo_series"] = "Super Mario Bros."
+	if _, found, err := s.Display(ctx, g); err != nil || found {
+		t.Fatal("changed source must invalidate presentation", err)
+	}
+}
+
+func TestHumanCanConfirmSourceValidatedAlternative(t *testing.T) {
+	s := canonicalTestStore(t)
+	ctx := context.Background()
+	ref := authority.Ref{Provider: "amiibo", Kind: "figure", ID: "0000000000340102"}
+	g := authority.Graph{Root: ref, Association: "identified_as", Entities: []authority.Entity{{Ref: ref, Label: "Mario", Fields: map[string]any{"amiibo_series": "Super Mario Bros."}, License: "MIT", RetrievedAt: time.Now()}}}
+	if err := s.CacheGraph(ctx, g); err != nil {
+		t.Fatal(err)
+	}
+	j, err := s.CreateIdentification(ctx, "Amiibo", "", IdentificationInput{}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	claimed, err := s.ClaimIdentification(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = s.FinishIdentification(ctx, claimed, IdentificationResult{Matches: []IdentificationMatch{{Graph: g, Confidence: "rejected"}}}, nil); err != nil {
+		t.Fatal(err)
+	}
+	draft := IdentificationProposal{JobID: j.ID, Title: "Mario — Super Mario Bros. amiibo", Selected: []int{0}, Attributes: json.RawMessage(`{"title":"Mario — Super Mario Bros. amiibo"}`), Tags: []string{"Amiibo"}}
+	if _, err = s.ProposeIdentification(ctx, draft); err == nil {
+		t.Fatal("automated rejection silently bypassed")
+	}
+	draft.ConfirmAlternative = true
+	p, err := s.ProposeIdentification(ctx, draft)
+	if err != nil {
+		t.Fatal("explicit human correction was blocked", err)
+	}
+	if _, err = s.DecideProposal(ctx, p.ID, ProposalDecision{Approve: true}); err != nil {
+		t.Fatal(err)
+	}
+	var confidence string
+	if err = s.pool.QueryRow(ctx, `select confidence from item_canonical_links where proposal_id=$1`, p.ID).Scan(&confidence); err != nil || confidence != "user_confirmed" {
+		t.Fatal("human correction provenance missing", confidence, err)
+	}
+}

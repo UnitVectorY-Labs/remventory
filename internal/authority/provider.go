@@ -76,7 +76,7 @@ type Provider interface {
 type Registry map[string]Provider
 
 func New() Registry {
-	return Registry{"musicbrainz": &MusicBrainz{HTTP: NewClient()}, "wikidata": &Wikidata{HTTP: NewClient()}}
+	return Registry{"amiibo": &Amiibo{HTTP: NewClient()}, "musicbrainz": &MusicBrainz{HTTP: NewClient()}, "wikidata": &Wikidata{HTTP: NewClient()}}
 }
 func (r Registry) Provider(name string) (Provider, error) {
 	p, ok := r[name]

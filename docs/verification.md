@@ -73,3 +73,23 @@ The shared store now merges partial updates, the browser submits explicit field
 removals, and approvals reject stale field snapshots. Regression tests cover
 preservation, deliberate removal, and stale proposals. The final baseline check
 must compare all 100 items again after the corrective change.
+
+## Guided Amiibo intake — November 4, 2026
+
+The new intake uses Type → Photos → Match → Save, with one decision per screen.
+A live AmiiboAPI test verified distinct Mario series and exact head/tail lookup.
+Private visual reference comparison corrected a model-only series misclassification:
+character recognition alone is insufficient, so Amiibo confidence now requires
+matching the sculpt/pose to a verified catalogue reference or exact identifying
+text. Reference artwork is held in memory for recognition and not shipped in the
+UI; the owner photo is the review image.
+
+Against an isolated production-derived database, browser review and approval
+linked a test Mario to `0000000000000002` (Super Smash Bros.). The resulting owned
+item was searchable by cached series metadata. This test figure is not a claim
+that the user owns one and is not copied into production inventory. The review
+card showed only its name, series, game series, type, confidence and source.
+Desktop/mobile checks cover the visible steps and adjacent primary action.
+Presentation tests reject invented fields, preserve cached decisions for unchanged
+source data and invalidate them when source facts change. PostgreSQL migration
+008 stores these decisions separately from provider metadata and personal data.

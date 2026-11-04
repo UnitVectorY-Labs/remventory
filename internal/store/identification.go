@@ -15,11 +15,12 @@ type IdentificationInput struct {
 	TemplateID string `json:"template_id,omitempty"`
 }
 type IdentificationMatch struct {
-	Role       string              `json:"role,omitempty"`
-	Candidate  authority.Candidate `json:"candidate"`
-	Graph      authority.Graph     `json:"graph"`
-	Confidence string              `json:"confidence"`
-	Reason     string              `json:"reason"`
+	Display    authority.DisplayPlan `json:"display"`
+	Role       string                `json:"role,omitempty"`
+	Candidate  authority.Candidate   `json:"candidate"`
+	Graph      authority.Graph       `json:"graph"`
+	Confidence string                `json:"confidence"`
+	Reason     string                `json:"reason"`
 }
 type IdentificationResult struct {
 	Outcome  string                `json:"outcome"`
@@ -202,13 +203,14 @@ func (s *Store) ReplaceIdentificationResult(ctx context.Context, id string, resu
 }
 
 type IdentificationProposal struct {
-	JobID          string          `json:"job_id"`
-	Selected       []int           `json:"selected"`
-	Title          string          `json:"title"`
-	Tags           []string        `json:"tags"`
-	Attributes     json.RawMessage `json:"attributes"`
-	ItemID         string          `json:"item_id,omitempty"`
-	ResultSnapshot string          `json:"result_snapshot"`
+	ConfirmAlternative bool            `json:"confirm_alternative,omitempty"`
+	JobID              string          `json:"job_id"`
+	Selected           []int           `json:"selected"`
+	Title              string          `json:"title"`
+	Tags               []string        `json:"tags"`
+	Attributes         json.RawMessage `json:"attributes"`
+	ItemID             string          `json:"item_id,omitempty"`
+	ResultSnapshot     string          `json:"result_snapshot"`
 }
 
 func (s *Store) ProposeIdentification(ctx context.Context, p IdentificationProposal) (Proposal, error) {
@@ -219,7 +221,7 @@ func (s *Store) ProposeIdentification(ctx context.Context, p IdentificationPropo
 	if j.State != "review" {
 		return Proposal{}, fmt.Errorf("job must be in review")
 	}
-	if err = validSelection(j, p.Selected); err != nil {
+	if err = validSelection(j, p.Selected, p.ConfirmAlternative); err != nil {
 		return Proposal{}, err
 	}
 	p.ItemID = j.ItemID
@@ -239,13 +241,13 @@ func (s *Store) ProposeIdentification(ctx context.Context, p IdentificationPropo
 	}
 	return s.createProposal(ctx, DefaultUserID, "identification_link", p)
 }
-func validSelection(j IdentificationJob, selected []int) error {
+func validSelection(j IdentificationJob, selected []int, confirmAlternative ...bool) error {
 	seen := map[int]bool{}
 	for _, i := range selected {
 		if i < 0 || i >= len(j.Result.Matches) || seen[i] {
 			return fmt.Errorf("invalid candidate selection")
 		}
-		if j.Result.Matches[i].Confidence == "rejected" {
+		if j.Result.Matches[i].Confidence == "rejected" && !(len(confirmAlternative) > 0 && confirmAlternative[0]) {
 			return fmt.Errorf("candidate was ruled out; search for another match")
 		}
 		seen[i] = true
@@ -268,7 +270,7 @@ func applyIdentification(ctx context.Context, tx pgx.Tx, proposal *Proposal) err
 	if fmt.Sprintf("%x", sha256.Sum256(snapshot)) != p.ResultSnapshot {
 		return fmt.Errorf("identification changed; create a new proposal")
 	}
-	if err = validSelection(j, p.Selected); err != nil {
+	if err = validSelection(j, p.Selected, p.ConfirmAlternative); err != nil {
 		return err
 	}
 	itemID := j.ItemID
@@ -300,7 +302,11 @@ func applyIdentification(ctx context.Context, tx pgx.Tx, proposal *Proposal) err
 		if match.Role == "component" {
 			relation = "contains"
 		}
-		_, err = tx.Exec(ctx, `insert into item_canonical_links(item_id,entity_id,relation,job_id,proposal_id,confidence) select $1,entity_id,$5,$6,$7,$8 from canonical_identifiers where provider=$2 and kind=$3 and external_id=$4 on conflict do nothing`, itemID, ref.Provider, ref.Kind, ref.ID, relation, j.ID, proposal.ID, match.Confidence)
+		confidence := match.Confidence
+		if p.ConfirmAlternative && confidence == "rejected" {
+			confidence = "user_confirmed"
+		}
+		_, err = tx.Exec(ctx, `insert into item_canonical_links(item_id,entity_id,relation,job_id,proposal_id,confidence) select $1,entity_id,$5,$6,$7,$8 from canonical_identifiers where provider=$2 and kind=$3 and external_id=$4 on conflict do nothing`, itemID, ref.Provider, ref.Kind, ref.ID, relation, j.ID, proposal.ID, confidence)
 		if err != nil {
 			return err
 		}

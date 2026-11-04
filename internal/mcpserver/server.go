@@ -310,7 +310,7 @@ func New(version string, repo *store.Store, remyService *remy.Service, intakeSer
 		}
 		return mcp.NewToolResultStructuredOnly(jobs), nil
 	})
-	server.AddTool(mcp.NewTool("propose_identification_link", mcp.WithDescription("Propose linking reviewed identification candidates to an owned item or creating a photographed item. Explicit confirmation still required."), mcp.WithString("job_id"), mcp.WithArray("selected"), mcp.WithString("title"), mcp.WithArray("tags")), func(ctx context.Context, r mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	server.AddTool(mcp.NewTool("propose_identification_link", mcp.WithBoolean("confirm_alternative", mcp.Description("Only true when the human explicitly selected a source-validated alternative the model had ruled out.")), mcp.WithDescription("Propose linking reviewed identification candidates to an owned item or creating a photographed item. Explicit confirmation still required."), mcp.WithString("job_id"), mcp.WithArray("selected"), mcp.WithString("title"), mcp.WithArray("tags")), func(ctx context.Context, r mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		b, _ := json.Marshal(r.GetArguments())
 		var p store.IdentificationProposal
 		if err := json.Unmarshal(b, &p); err != nil {

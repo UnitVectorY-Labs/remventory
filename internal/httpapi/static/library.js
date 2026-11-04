@@ -35,7 +35,11 @@ async function loadLibraryMeta() {
   pendingProposals = proposals.proposals || [];
   libraryTypes = graphVocabulary.templates || [];
   const tags = document.querySelector("#tag-filters"); tags.replaceChildren();
-  for (const tag of facets.tags || []) tags.append(button(`${tag.name} · ${tag.count}`, () => { const selected = libraryFilters.tag.split(",").filter(Boolean); libraryFilters.tag = (selected.includes(tag.name) ? selected.filter(value => value !== tag.name) : [...selected, tag.name]).join(","); showLibrary(); }, `tag ${libraryFilters.tag.split(",").includes(tag.name) ? "selected" : ""}`));
+  const broadTags = ["Amiibo", "Vinyl", "Vinyl Records", "Movies", "Video games", "Games", "Hardware", "Books"];
+  const browseTags = (facets.tags || []).filter(t => broadTags.includes(t.name));
+  const vinyl=browseTags.find(t=>t.name==="Vinyl"),legacyVinyl=browseTags.find(t=>t.name==="Vinyl Records");
+  if(vinyl&&legacyVinyl)browseTags.splice(browseTags.indexOf(vinyl.count>=legacyVinyl.count?legacyVinyl:vinyl),1);
+  for (const tag of browseTags) tags.append(button(`${tag.name === "Vinyl Records" ? "Vinyl" : tag.name} · ${tag.count}`, () => { const selected = libraryFilters.tag.split(",").filter(Boolean); libraryFilters.tag = (selected.includes(tag.name) ? selected.filter(value => value !== tag.name) : [...selected, tag.name]).join(","); showLibrary(); }, `tag ${libraryFilters.tag.split(",").includes(tag.name) ? "selected" : ""}`));
   document.querySelector("#review-count").textContent = pendingProposals.length || "";
   return facets;
 }
@@ -78,7 +82,7 @@ async function showLibrary(page = 0) {
         if (item.images?.length) { const img = el("img"); img.src = (item.images.find(image => image.is_primary) || item.images[0]).thumbnail_url; img.alt = item.title; img.loading = "lazy"; picture.append(img); }
         else { picture.classList.add("picture-placeholder"); picture.append(icon("box")); }
         const info = el("div", "inventory-info"); info.append(el("h2", "", item.title));
-        const tags = el("div", "card-tags"); for (const tag of (item.tags || []).slice(0, 3)) tags.append(el("span", "tag", tag)); info.append(tags);
+        const tags = el("div", "card-tags"); for (const tag of (item.tags || []).filter(t => ["Amiibo","Vinyl","Vinyl Records","Movies","Video games","Games","Hardware","Books","Box set"].includes(t)).slice(0, 2)) tags.append(el("span", "tag", tag)); info.append(tags);
         card.append(picture, info); grid.append(card);
       }
       stage.append(grid);

@@ -49,3 +49,29 @@ game reliably but cannot verify a particular retail box. Missing retail entities
 remain missing; Remventory can propose several `contains` links from an owned
 box to independently verified works, with the packaging interpretation explicitly
 recorded as an inference approved by the user. It must not invent a release QID.
+
+## AmiiboAPI (added November 4, 2026)
+
+| Provider | Domain | Open data? | API/dataset | Auth | Rate limit | Cache allowed? | Commercial use? | Identifier | Relationship depth | Recommendation |
+|---|---|---|---|---|---|---|---|---|---|---|
+| AmiiboAPI (8bitDream maintained fork) | Nintendo Amiibo figure/card variants | Repository catalogue ships under MIT; third-party artwork/game material is separate | Read-only JSON API and repository JSON dataset | None | No numeric public limit stated; use the existing serialized 1.2-second gate and backoff | API explicitly recommends caching | MIT permits commercial reuse of repository metadata with notice; not a Nintendo trademark/artwork license | 16 hexadecimal digits: head + tail; distinguishes figure variants | Character, game series, Amiibo series, regional dates. This integration stores variant identity and factual metadata; no copied artwork or game-use dataset | Enabled for product-level Amiibo identity |
+
+Use **amiiboapi.org**, maintained by 8bitDream. The original N3evin repository
+was archived and its old .com endpoint is not the current service. Facts and
+identifier links are persisted; catalogue artwork is not stored or redistributed as an application asset.
+For private visual identification, the provider can supply a bounded reference
+image from the exact verified variant, held in memory only for the LLM comparison.
+Uploaded owner photos are used in the UI. No NFC dumps or emulator data
+are requested. Coverage and service continuity are community maintained, so an
+unavailable service or an unlisted new figure must remain an uncertain result.
+
+Official references checked November 4, 2026:
+[API documentation and caching terms](https://amiiboapi.org/docs/),
+[maintained repository](https://github.com/8bitDream/AmiiboAPI),
+[repository license](https://github.com/8bitDream/AmiiboAPI/blob/dev/LICENSE).
+
+MIT notice for cached catalogue metadata: Copyright (c) 2017 Nevin Vu. Permission
+is granted to use, copy, modify, merge, publish, distribute, sublicense and sell
+copies under the [MIT license](https://github.com/8bitDream/AmiiboAPI/blob/dev/LICENSE),
+including its copyright/permission notice and warranty disclaimer. Third-party
+Nintendo names and images retain their respective rights.

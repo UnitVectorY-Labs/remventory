@@ -112,3 +112,15 @@ This trigger failure is independent of application startup and migrations.
 A final live provider run exposed Wikidata's anonymous 50-ID request limit on a
 large TV hierarchy. Entity retrieval now splits larger bounded traversals into
 batches of at most 50; a regression test verifies all 80 entities survive batching.
+
+
+## Guided intake update — November 4, 2026
+
+The user authorized production iteration, including data curation. Migration 008
+adds only canonical_presentations for cached model-selected field plans. AmiiboAPI
+adds outbound HTTPS to amiiboapi.org and bounded private reference-image reads
+from raw.githubusercontent.com; existing internet egress covers both. No new
+secrets, worker processes, buckets or Kubernetes configuration are needed. Owner
+photos remain the UI artwork. Presentation choices never execute model HTML and
+never replace source facts or owned-item attributes. Existing tag normalization
+is performed through proposals with exact before/after field checks.

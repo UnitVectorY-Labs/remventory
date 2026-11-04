@@ -115,6 +115,12 @@ func (a api) getIdentification(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 404, "identification not found")
 		return
 	}
+	if r.URL.Query().Get("compact") == "1" {
+		for i := range job.Result.Matches {
+			job.Result.Matches[i].Graph = authority.Graph{Root: job.Result.Matches[i].Graph.Root}
+		}
+		job.Result.Searches = nil
+	}
 	writeJSON(w, 200, job)
 }
 func (a api) identificationAction(w http.ResponseWriter, r *http.Request) {
@@ -165,6 +171,10 @@ func (a api) enrichCollection(w http.ResponseWriter, r *http.Request) {
 		item, err := a.store.GetItem(r.Context(), input.ItemID)
 		if err != nil {
 			writeError(w, 404, "item not found")
+			return
+		}
+		if active, e := a.store.ActiveIdentification(r.Context(), item.ID); e == nil {
+			writeJSON(w, 202, map[string]any{"jobs": []store.IdentificationJob{active}})
 			return
 		}
 		job, err := a.store.CreateIdentification(r.Context(), strings.Join(item.Tags, ", "), item.ID, store.IdentificationInput{Text: item.Title + "\nOriginal fields: " + string(item.Attributes)}, nil)
@@ -322,7 +332,7 @@ func (a api) relatedOwnership(w http.ResponseWriter, r *http.Request) {
 	seen := map[string]bool{}
 	for index, m := range job.Result.Matches {
 		for _, e := range m.Graph.Entities {
-			isWork := e.Kind == "release-group" || e.Kind == "recording" || e.Kind == "work" || e.Ref == m.Graph.Root
+			isWork := e.Kind == "release-group" || e.Ref == m.Graph.Root
 			if !isWork {
 				continue
 			}
@@ -336,6 +346,9 @@ func (a api) relatedOwnership(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 			for _, item := range items {
+				if item.ID == job.ItemID {
+					continue
+				}
 				key := fmt.Sprint(index) + ":" + item.ID
 				if !seen[key] {
 					seen[key] = true
@@ -348,6 +361,9 @@ func (a api) relatedOwnership(w http.ResponseWriter, r *http.Request) {
 		// but are deliberately not presented as verified canonical duplicates.
 		items, _, _ := a.store.SearchInventory(r.Context(), m.Candidate.Label, "", "", "", 10, 0)
 		for _, item := range items {
+			if item.ID == job.ItemID {
+				continue
+			}
 			key := fmt.Sprint(index) + ":" + item.ID
 			if !seen[key] {
 				seen[key] = true
