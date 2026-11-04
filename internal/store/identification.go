@@ -203,14 +203,16 @@ func (s *Store) ReplaceIdentificationResult(ctx context.Context, id string, resu
 }
 
 type IdentificationProposal struct {
-	ConfirmAlternative bool            `json:"confirm_alternative,omitempty"`
-	JobID              string          `json:"job_id"`
-	Selected           []int           `json:"selected"`
-	Title              string          `json:"title"`
-	Tags               []string        `json:"tags"`
-	Attributes         json.RawMessage `json:"attributes"`
-	ItemID             string          `json:"item_id,omitempty"`
-	ResultSnapshot     string          `json:"result_snapshot"`
+	ReplaceExisting       bool            `json:"replace_existing,omitempty"`
+	ExistingLinksSnapshot string          `json:"existing_links_snapshot,omitempty"`
+	ConfirmAlternative    bool            `json:"confirm_alternative,omitempty"`
+	JobID                 string          `json:"job_id"`
+	Selected              []int           `json:"selected"`
+	Title                 string          `json:"title"`
+	Tags                  []string        `json:"tags"`
+	Attributes            json.RawMessage `json:"attributes"`
+	ItemID                string          `json:"item_id,omitempty"`
+	ResultSnapshot        string          `json:"result_snapshot"`
 }
 
 func (s *Store) ProposeIdentification(ctx context.Context, p IdentificationProposal) (Proposal, error) {
@@ -225,6 +227,14 @@ func (s *Store) ProposeIdentification(ctx context.Context, p IdentificationPropo
 		return Proposal{}, err
 	}
 	p.ItemID = j.ItemID
+	if p.ReplaceExisting {
+		if j.ItemID == "" || len(p.Selected) == 0 {
+			return Proposal{}, fmt.Errorf("select a replacement for an existing item")
+		}
+		if err = s.pool.QueryRow(ctx, `select coalesce(jsonb_agg(jsonb_build_array(entity_id,relation) order by entity_id,relation),'[]'::jsonb)::text from item_canonical_links where item_id=$1`, j.ItemID).Scan(&p.ExistingLinksSnapshot); err != nil {
+			return Proposal{}, err
+		}
+	}
 	snapshot, _ := json.Marshal(j.Result)
 	p.ResultSnapshot = fmt.Sprintf("%x", sha256.Sum256(snapshot))
 	if p.ItemID == "" {
@@ -289,6 +299,28 @@ func applyIdentification(ctx context.Context, tx pgx.Tx, proposal *Proposal) err
 		// Photo attachment and primary choice are part of the same explicit approval.
 		_, err = tx.Exec(ctx, `insert into item_assets(id,item_id,object_key,thumbnail_object_key,mime_type,original_filename,width,height,size_bytes,is_primary) select id,$2,object_key,thumbnail_key,mime_type,filename,width,height,size_bytes,id=(select id from identification_photos where job_id=$1 order by id limit 1) from identification_photos where job_id=$1`, j.ID, itemID)
 		if err != nil {
+			return err
+		}
+	}
+	if j.ItemID != "" {
+		// Serialize confirmations for one owned item, including replacement proposals.
+		var locked string
+		if err = tx.QueryRow(ctx, `select id::text from items where id=$1 for update`, itemID).Scan(&locked); err != nil {
+			return err
+		}
+	}
+	if p.ReplaceExisting {
+		if j.ItemID == "" || len(p.Selected) == 0 {
+			return fmt.Errorf("select a replacement for an existing item")
+		}
+		var current string
+		if err = tx.QueryRow(ctx, `select coalesce(jsonb_agg(jsonb_build_array(entity_id,relation) order by entity_id,relation),'[]'::jsonb)::text from item_canonical_links where item_id=$1`, itemID).Scan(&current); err != nil {
+			return err
+		}
+		if current != p.ExistingLinksSnapshot {
+			return fmt.Errorf("linked matches changed; review a new proposal")
+		}
+		if _, err = tx.Exec(ctx, `delete from item_canonical_links where item_id=$1`, itemID); err != nil {
 			return err
 		}
 	}

@@ -47,6 +47,7 @@ func New(opts Options) http.Handler {
 	}
 
 	mux.HandleFunc("GET /healthz", api.health)
+	mux.HandleFunc("GET /api/intake/{id}/status", api.withToken(api.identificationStatus))
 	mux.HandleFunc("GET /api/intake/{id}/cards", api.withToken(api.identificationCards))
 	mux.HandleFunc("GET /api/items/{id}/cards", api.withToken(api.itemCards))
 	mux.HandleFunc("GET /api/canonical/{id}/card", api.withToken(api.canonicalCard))
@@ -289,12 +290,18 @@ func (a api) listItems(w http.ResponseWriter, r *http.Request) {
 		setImageURLs(items[i].Images)
 	}
 
+	statuses, err := a.store.IdentificationStatuses(r.Context(), items)
+	if err != nil {
+		writeError(w, 500, "load identification status")
+		return
+	}
 	writeJSON(w, http.StatusOK, map[string]any{
-		"items":       items,
-		"total":       total,
-		"category_id": categoryID,
-		"limit":       limit,
-		"offset":      offset,
+		"identification_status": statuses,
+		"items":                 items,
+		"total":                 total,
+		"category_id":           categoryID,
+		"limit":                 limit,
+		"offset":                offset,
 	})
 }
 

@@ -41,3 +41,24 @@ less likely. The Save screen shows your chosen series. Confirming that choice
 records human confirmation separately from the model's earlier assessment.
 Reference-image comparison is optional and time bounded; uncertain candidates
 can still proceed to human review.
+
+The processing screen keeps the photo in place while an htmx HTML fragment polls
+server-side progress. Leaving the screen does not stop the durable job. Pending
+items retain their layout between unchanged updates. htmx is bundled locally.
+
+Suggested alternatives show their names and series. Check the important source
+facts, choose a version, then confirm the final selection. Optional personal
+fields can be added before saving. Later, **Edit my details** changes your own
+fields and photos; **Correct catalogue match** starts another review. The final
+review offers an explicit checkbox to replace previously linked matches. This
+changes ownership associations, not shared source metadata or your personal data.
+
+Collection cards use both color and text: green **Identified** means an approved
+catalogue link exists; amber **Needs review** means results await confirmation;
+blue **Identifying** means server work is pending; gray **Not identified** means
+there is no approved catalogue link. An identified work does not imply that its
+physical edition or pressing has been confirmed.
+
+All uploaded views remain available from the photo selector during review. The
+item detail shows a short **Your copy** section for stored format, condition and
+location, with other personal fields under the expandable notes section.

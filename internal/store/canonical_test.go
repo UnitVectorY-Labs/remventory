@@ -316,3 +316,76 @@ func TestHumanCanConfirmSourceValidatedAlternative(t *testing.T) {
 		t.Fatal("human correction provenance missing", confidence, err)
 	}
 }
+
+func TestReplacementRequiresApprovalAndPreservesOwnedFields(t *testing.T) {
+	s := canonicalTestStore(t)
+	ctx := context.Background()
+	var id string
+	if err := s.pool.QueryRow(ctx, `insert into items(user_id,title,tags,attributes_jsonb) values($1,'My Mario',array['Amiibo'],'{"title":"My Mario","condition":"Mine"}') returning id`, DefaultUserID).Scan(&id); err != nil {
+		t.Fatal(err)
+	}
+	makeProposal := func(externalID string, replace bool) Proposal {
+		t.Helper()
+		ref := authority.Ref{Provider: "amiibo", Kind: "figure", ID: externalID}
+		g := authority.Graph{Root: ref, Association: "identified_as", Entities: []authority.Entity{{Ref: ref, Label: externalID, Fields: map[string]any{}, License: "MIT", RetrievedAt: time.Now()}}}
+		if err := s.CacheGraph(ctx, g); err != nil {
+			t.Fatal(err)
+		}
+		j, err := s.CreateIdentification(ctx, "Amiibo", id, IdentificationInput{}, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		claimed, err := s.ClaimIdentification(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err = s.FinishIdentification(ctx, claimed, IdentificationResult{Matches: []IdentificationMatch{{Graph: g, Confidence: "confident"}}}, nil); err != nil {
+			t.Fatal(err)
+		}
+		p, err := s.ProposeIdentification(ctx, IdentificationProposal{JobID: j.ID, Selected: []int{0}, ReplaceExisting: replace})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return p
+	}
+	p := makeProposal("original", false)
+	statuses, err := s.IdentificationStatuses(ctx, []Item{{ID: id}})
+	if err != nil || statuses[id] != "review" {
+		t.Fatal(statuses, err)
+	}
+	if _, err = s.DecideProposal(ctx, p.ID, ProposalDecision{Approve: true}); err != nil {
+		t.Fatal(err)
+	}
+	replacement := makeProposal("corrected", true)
+	var count int
+	s.pool.QueryRow(ctx, `select count(*) from item_canonical_links where item_id=$1`, id).Scan(&count)
+	if count != 1 {
+		t.Fatal("proposal mutated links")
+	}
+	if _, err = s.DecideProposal(ctx, replacement.ID, ProposalDecision{Approve: true}); err != nil {
+		t.Fatal(err)
+	}
+	var externalID string
+	if err = s.pool.QueryRow(ctx, `select external_id from canonical_identifiers c join item_canonical_links l on l.entity_id=c.entity_id where l.item_id=$1`, id).Scan(&externalID); err != nil || externalID != "corrected" {
+		t.Fatal(externalID, err)
+	}
+	item, _ := s.GetItem(ctx, id)
+	var attrs map[string]any
+	json.Unmarshal(item.Attributes, &attrs)
+	if item.Title != "My Mario" || attrs["condition"] != "Mine" {
+		t.Fatal("replacement changed owned fields")
+	}
+	statuses, err = s.IdentificationStatuses(ctx, []Item{{ID: id}})
+	if err != nil || statuses[id] != "identified" {
+		t.Fatal(statuses, err)
+	}
+	// A different confirmation between proposing and approving must not be discarded.
+	stale := makeProposal("stale", true)
+	_, err = s.pool.Exec(ctx, `insert into item_canonical_links(item_id,entity_id,relation,proposal_id,confidence) select $1,entity_id,'contains',$2,'confident' from canonical_identifiers where external_id='original'`, id, p.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = s.DecideProposal(ctx, stale.ID, ProposalDecision{Approve: true}); err == nil {
+		t.Fatal("stale replacement removed newer links")
+	}
+}

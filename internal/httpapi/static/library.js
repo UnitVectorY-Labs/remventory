@@ -49,13 +49,14 @@ async function showLibrary(page = 0) {
   setWorkspace("collection");
   const generation = ++libraryGeneration; ++requestGeneration;
   currentResponse = null; libraryPage = page;
-  stage.innerHTML = '<p class="muted" role="status">Loading collection…</p>';
+  stage.setAttribute('aria-busy', 'true');
+  if (!stage.querySelector('.inventory-grid')) stage.innerHTML = '<p class="muted" role="status">Loading collection…</p>';
   try {
     const facets = await loadLibraryMeta();
     const params = new URLSearchParams({ ...libraryFilters, limit: "36", offset: String(page * 36) });
     const result = await api(`/api/items?${params}`);
     if (generation !== libraryGeneration) return;
-    stage.replaceChildren();
+    stage.removeAttribute('aria-busy'); stage.replaceChildren();
     const toolbar = el("form", "library-toolbar");
     const search = el("input"); search.type = "search"; search.placeholder = "Search tags and fields…"; search.setAttribute("aria-label", "Search collection"); search.value = libraryFilters.q;
     const submit = el("button", "secondary", "Search"); submit.type = "submit";
@@ -65,6 +66,7 @@ async function showLibrary(page = 0) {
     stage.append(toolbar);
     const caption = el("div", "shelf-caption");
     caption.append(el("p", "", `${result.total} ${result.total === 1 ? "item" : "items"}`));
+    const legend = el('p', 'status-legend'); legend.append(el('span', 'identified', '● Identified'), el('span', 'review', '● Needs review'), el('span', 'unidentified', '○ Not identified')); caption.append(legend);
     const active = Object.entries(libraryFilters).filter(([,value]) => value);
     if (active.length) caption.append(button("Clear filters", () => { libraryFilters = { q: "", category_id: "", tag: "", location: "" }; showLibrary(); }, "plain-button"));
     if (libraryFilters.tag) caption.append(el("span", "tag selected", libraryFilters.tag));
@@ -83,12 +85,16 @@ async function showLibrary(page = 0) {
         else { picture.classList.add("picture-placeholder"); picture.append(icon("box")); }
         const info = el("div", "inventory-info"); info.append(el("h2", "", item.title));
         const tags = el("div", "card-tags"); for (const tag of (item.tags || []).filter(t => ["Amiibo","Vinyl","Vinyl Records","Movies","Video games","Games","Hardware","Books","Box set"].includes(t)).slice(0, 2)) tags.append(el("span", "tag", tag)); info.append(tags);
+        const status = result.identification_status?.[item.id] || 'unidentified';
+        const statusLabels = {identified:'Identified',review:'Needs review',processing:'Identifying…',unidentified:'Not identified'};
+        card.dataset.identification = status;
+        info.append(el('span', `identification-badge ${status}`, statusLabels[status] || statusLabels.unidentified));
         card.append(picture, info); grid.append(card);
       }
       stage.append(grid);
     }
     if (result.total > 36) { const pager = el("div", "actions"); const previous = button("← Previous", () => showLibrary(page - 1)); previous.disabled = page === 0; const next = button("Next →", () => showLibrary(page + 1)); next.disabled = (page + 1) * 36 >= result.total; pager.append(previous, el("span", "muted", `Page ${page + 1} of ${Math.ceil(result.total / 36)}`), next); stage.append(pager); }
-  } catch (error) { if (generation === libraryGeneration) renderError(error); }
+  } catch (error) { if (generation === libraryGeneration) { stage.removeAttribute("aria-busy"); renderError(error); } }
 }
 
 function labeled(label, control) { const wrapper = el("label", "form-field"); wrapper.append(el("span", "", label), control); return wrapper; }
@@ -344,7 +350,7 @@ async function openTypeEditor(existing = null) {
   function restore() { catalogModal.replaceChildren(dialogHeader(existing ? "Edit template" : "Create a starting template"), content); catalogModal.oncancel = null; }
   restore(); catalogModal.onclose = null; if (!catalogModal.open) catalogModal.showModal();
 }
-if (!new URLSearchParams(location.search).get("message")) showLibrary();
+if (!new URLSearchParams(location.search).get("message") && !new URLSearchParams(location.search).get("identify")) showLibrary();
 
 async function proposePrimaryPicture(item, imageID) {
   try {
@@ -389,7 +395,7 @@ async function showAdmin() {
     tags.append(tagHeading, el("p", "muted", "Choose which fields appear when a tag is added to a draft. These are suggestions; values remain optional."));
     for (const [tag, keys] of Object.entries(graphVocabulary.tag_fields || {})) { const row = el("div", "admin-row"); row.append(el("strong", "", tag), el("span", "muted", keys.map(key => graphVocabulary.fields.find(field => field.key === key)?.label || prettyKey(key)).join(", "))); tags.append(row); }
     stage.append(fields, templates, tags);
-  } catch (error) { if (generation === libraryGeneration) renderError(error); }
+  } catch (error) { if (generation === libraryGeneration) { stage.removeAttribute("aria-busy"); renderError(error); } }
 }
 
 function reviewDeletion(kind, record) {
