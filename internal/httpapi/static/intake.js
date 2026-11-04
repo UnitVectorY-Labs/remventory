@@ -258,7 +258,7 @@ function saveStep(job) {
   }
   if (!job.item_id) {
     const personal = el('details', 'personal-notes'); personal.append(el('summary', '', 'Add your own details (optional)'));
-    personalEditor = fieldSetEditor(flow.personalAttributes || {});
+    personalEditor = fieldSetEditor(flow.personalAttributes || {}, [], ['title']);
     personal.append(el('p', 'muted', 'Location, condition and notes describe your own item. Catalogue facts stay linked to their source.'), personalEditor.root); screen.body.append(personal);
   }
   const status = el('p', 'flow-status'); status.setAttribute('role', 'status'); screen.body.append(status);

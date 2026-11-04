@@ -133,12 +133,12 @@ function registeredFieldEditor(definition, value, onRemove) {
   return { row, read };
 }
 
-function fieldSetEditor(initialValues = {}, suggestedKeys = []) {
+function fieldSetEditor(initialValues = {}, suggestedKeys = [], excludedKeys = []) {
   const root = el("div", "field-set-editor"); const rows = el("div"); const entries = new Map();
   const picker = el("select"); picker.setAttribute("aria-label", "Choose a defined field");
-  function refreshPicker() { picker.replaceChildren(new Option("Add a defined field…", "")); for (const definition of graphVocabulary.fields) if (!entries.has(definition.key)) picker.append(new Option(definition.label, definition.key)); }
+  function refreshPicker() { picker.replaceChildren(new Option("Add a defined field…", "")); for (const definition of graphVocabulary.fields) if (!entries.has(definition.key) && !excludedKeys.includes(definition.key)) picker.append(new Option(definition.label, definition.key)); }
   function add(key, value) {
-    if (entries.has(key)) return;
+    if (entries.has(key) || excludedKeys.includes(key)) return;
     const definition = graphVocabulary.fields.find(field => field.key === key); if (!definition) return;
     const entry = registeredFieldEditor(definition, value, () => { entry.row.remove(); entries.delete(key); refreshPicker(); }); entries.set(key, entry); rows.append(entry.row); refreshPicker();
   }
