@@ -1029,3 +1029,6 @@ img.icon { flex-shrink: 0; opacity: .8; }
 @media(max-width:650px){.flow-picture:has(.photo-switcher)>img {height:170px;}}
 .contained-choice>span {display:grid;gap:.25rem;}
 .contained-choice strong {font-weight:550;}
+.request-controls {filter:none;}
+.composer:has(#stop-request:not([hidden])) #composer-hint {display:block;font-size:.75rem;max-width:160px;}
+.composer .submitted-message {flex:1;min-width:0;}
