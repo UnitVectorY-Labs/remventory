@@ -243,9 +243,25 @@ func (a api) resolveForIdentification(w http.ResponseWriter, r *http.Request) {
 	if !a.intakeReady(w) {
 		return
 	}
-	var ref authority.Ref
-	if !decodeJSON(w, r, &ref) {
+	var input struct {
+		authority.Ref
+		URL string `json:"url"`
+	}
+	if !decodeJSON(w, r, &input) {
 		return
+	}
+	ref := input.Ref
+	if input.URL != "" {
+		parsed, known, e := authority.ParseURL(input.URL)
+		if e != nil {
+			writeError(w, 400, e.Error())
+			return
+		}
+		if !known {
+			writeError(w, 400, "use a supported catalogue URL; generic references can be added in the item’s links")
+			return
+		}
+		ref = parsed
 	}
 	job, err := a.store.Identification(r.Context(), r.PathValue("id"))
 	if err != nil || job.State != "review" {

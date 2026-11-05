@@ -19,6 +19,7 @@ import (
 	"testing"
 
 	"github.com/UnitVectorY-Labs/remventory/internal/config"
+	"github.com/UnitVectorY-Labs/remventory/internal/intake"
 	"github.com/UnitVectorY-Labs/remventory/internal/itemimages"
 	"github.com/UnitVectorY-Labs/remventory/internal/remy"
 	"github.com/UnitVectorY-Labs/remventory/internal/store"
@@ -251,7 +252,16 @@ func TestLibraryApprovalAndPhotos(t *testing.T) {
 	templateProposal := call("POST", "/api/proposals/category", map[string]any{"name": "Game suggestions", "default_tags": []string{"Games", "Wii"}, "default_values": map[string]any{"platform": "Wii"}, "attributes": []any{map[string]any{"key": "year", "label": "Year", "data_type": "number", "required": true}}})
 	call("POST", "/api/proposals/"+templateProposal["id"].(string)+"/decision", map[string]bool{"approve": true})
 	templates := call("GET", "/api/categories", nil)["categories"].([]any)
-	templateID := templates[0].(map[string]any)["id"].(string)
+	templateID := ""
+	for _, raw := range templates {
+		v := raw.(map[string]any)
+		if v["name"] == "Game suggestions" {
+			templateID = v["id"].(string)
+		}
+	}
+	if templateID == "" {
+		t.Fatal("approved template missing")
+	}
 	// The selected creation template must reach vision without changing inventory.
 	var visionCalls atomic.Int32
 	vision := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -397,4 +407,30 @@ func TestLibraryApprovalAndPhotos(t *testing.T) {
 	if facets["total"].(float64) != 4 {
 		t.Fatal("wrong library total")
 	}
+	// Ordinary references are stored only as owner links and are never fetched.
+	handler = New(Options{Config: config.Config{}, Store: repo, Intake: intake.New(config.Config{}, repo, objects), Images: objects, Logger: slog.Default()})
+	var visited atomic.Int32
+	referenceServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { visited.Add(1) }))
+	defer referenceServer.Close()
+	referenceBefore := call("GET", "/api/items/"+sportsID, nil)["attributes"].(map[string]any)
+	ref := call("POST", "/api/items/"+sportsID+"/catalogue/proposal", map[string]any{"operation": "reference", "url": referenceServer.URL + "/owner-only", "name": "Owner reference"})
+	refProposal := ref["proposal"].(map[string]any)
+	notYet := call("GET", "/api/items/"+sportsID, nil)["attributes"].(map[string]any)
+	if len(notYet["links"].([]any)) != len(referenceBefore["links"].([]any)) {
+		t.Fatal("reference saved before approval")
+	}
+	call("POST", "/api/proposals/"+refProposal["id"].(string)+"/decision", map[string]bool{"approve": true})
+	withReference := call("GET", "/api/items/"+sportsID, nil)["attributes"].(map[string]any)
+	if len(withReference["links"].([]any)) != len(referenceBefore["links"].([]any))+1 || visited.Load() != 0 {
+		t.Fatal("reference was not saved safely without fetching")
+	}
+	referenceRemoval := call("POST", "/api/items/"+sportsID+"/catalogue/proposal", map[string]any{"operation": "reference_remove", "url": referenceServer.URL + "/owner-only", "name": "Owner reference"})["proposal"].(map[string]any)
+	call("POST", "/api/proposals/"+referenceRemoval["id"].(string)+"/decision", map[string]bool{"approve": true})
+	after := call("GET", "/api/items/"+sportsID, nil)["attributes"].(map[string]any)
+	old, _ := json.Marshal(referenceBefore)
+	current, _ := json.Marshal(after)
+	if !bytes.Equal(old, current) || visited.Load() != 0 {
+		t.Fatal("reference removal changed other owner fields or fetched a URL")
+	}
+
 }

@@ -93,3 +93,24 @@ Desktop/mobile checks cover the visible steps and adjacent primary action.
 Presentation tests reject invented fields, preserve cached decisions for unchanged
 source data and invalidate them when source facts change. PostgreSQL migration
 008 stores these decisions separately from provider metadata and personal data.
+
+## Unified data management (November 2026)
+
+Migration 009 was tested with fresh isolated schemas and a local restore of the
+real collection. Catalogue link/unlink proposals leave owner attributes unchanged;
+generic reference add/remove requires approval and never fetches the URL. Queued
+jobs retain their runtime type-policy snapshot, and photo creation copies the
+same template defaults as manual creation.
+
+The browser check exercised manual URL linking, unlinking, named-reference
+add/remove, source-field selection, runtime creation of a new type, and visible
+Remy on desktop/mobile. The live Remy field-review call returned source-backed
+suggestions against a production-derived record without changing its attributes.
+
+Offline UI regressions (install `jsdom` separately and expose it on `NODE_PATH`):
+
+```
+node scripts/ui-regression.cjs
+node scripts/intake-ui-regression.cjs
+node scripts/catalogue-ui-regression.cjs
+```

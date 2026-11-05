@@ -27,6 +27,7 @@ const DefaultUserID = "00000000-0000-0000-0000-000000000001"
 var ErrNotFound = errors.New("not found")
 
 type Category struct {
+	IntakeConfig  IntakeConfig    `json:"intake_config" db:"intake_config"`
 	DefaultTags   []string        `json:"default_tags" db:"default_tags"`
 	DefaultValues json.RawMessage `json:"default_values" db:"default_values"`
 	ID            string          `json:"id" db:"id"`
@@ -100,6 +101,7 @@ type Proposal struct {
 }
 
 type CategoryProposalPayload struct {
+	IntakeConfig  *IntakeConfig    `json:"intake_config,omitempty"`
 	DefaultTags   []string         `json:"default_tags,omitempty"`
 	DefaultValues json.RawMessage  `json:"default_values,omitempty"`
 	Operation     string           `json:"operation"`
@@ -306,7 +308,7 @@ func (s *Store) EnsureDefaultUser(ctx context.Context, displayName string) error
 }
 
 func (s *Store) ListCategories(ctx context.Context, limit, offset int) ([]Category, error) {
-	rows, err := s.pool.Query(ctx, `select id, user_id, name, coalesce(description, '') as description, created_at, updated_at, default_tags, default_values
+	rows, err := s.pool.Query(ctx, `select id, user_id, name, coalesce(description, '') as description, created_at, updated_at, default_tags, default_values, intake_config
 		from categories
 		order by lower(name), created_at
 		limit $1 offset $2`, limit, offset)
@@ -348,7 +350,7 @@ func (s *Store) GetCategoryDefinition(ctx context.Context, categoryID string) (C
 		return Category{}, nil
 	}
 	var category Category
-	err := s.pool.QueryRow(ctx, `select id, user_id, name, coalesce(description, ''), created_at, updated_at, default_tags, default_values
+	err := s.pool.QueryRow(ctx, `select id, user_id, name, coalesce(description, ''), created_at, updated_at, default_tags, default_values, intake_config
 		from categories
 		where id = $1`, categoryID).Scan(
 		&category.ID,
@@ -359,6 +361,7 @@ func (s *Store) GetCategoryDefinition(ctx context.Context, categoryID string) (C
 		&category.UpdatedAt,
 		&category.DefaultTags,
 		&category.DefaultValues,
+		&category.IntakeConfig,
 	)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return Category{}, ErrNotFound
@@ -527,7 +530,7 @@ func (s *Store) RevisePendingProposal(ctx context.Context, proposalID string, pa
 	}
 
 	switch proposal.Type {
-	case "identification_link":
+	case "catalogue_change", "identification_link":
 		return Proposal{}, errors.New("revise identification through its review queue")
 	case "graph_change":
 		var revised GraphProposalPayload
@@ -631,6 +634,8 @@ func (s *Store) DecideProposal(ctx context.Context, proposalID string, decision 
 
 func (s *Store) commitProposal(ctx context.Context, tx pgx.Tx, proposal *Proposal) error {
 	switch proposal.Type {
+	case "catalogue_change":
+		return applyCatalogue(ctx, tx, proposal)
 	case "identification_link":
 		return applyIdentification(ctx, tx, proposal)
 	case "graph_change":
@@ -690,6 +695,11 @@ func (s *Store) commitProposal(ctx context.Context, tx pgx.Tx, proposal *Proposa
 }
 
 func validateCategoryProposalPayload(payload *CategoryProposalPayload) error {
+	if payload.IntakeConfig != nil {
+		if err := payload.IntakeConfig.Validate(); err != nil {
+			return err
+		}
+	}
 	if payload.Operation == "" {
 		payload.Operation = "create"
 	}
@@ -923,9 +933,9 @@ func applyCategoryChange(ctx context.Context, tx pgx.Tx, userID string, payload 
 
 func insertCategory(ctx context.Context, tx pgx.Tx, userID string, payload CategoryProposalPayload) error {
 	var categoryID string
-	err := tx.QueryRow(ctx, `insert into categories (user_id, name, description,default_tags,default_values)
-		values ($1, $2, nullif($3, ''),$4,$5)
-		returning id`, userID, payload.Name, payload.Description, nonNilTags(payload.DefaultTags), payload.DefaultValues).Scan(&categoryID)
+	err := tx.QueryRow(ctx, `insert into categories (user_id, name, description,default_tags,default_values,intake_config)
+		values ($1, $2, nullif($3, ''),$4,$5,coalesce($6::jsonb,'{}'::jsonb))
+		returning id`, userID, payload.Name, payload.Description, nonNilTags(payload.DefaultTags), payload.DefaultValues, payload.IntakeConfig).Scan(&categoryID)
 	if err != nil {
 		return err
 	}
@@ -950,8 +960,8 @@ func insertCategory(ctx context.Context, tx pgx.Tx, userID string, payload Categ
 }
 
 func updateCategory(ctx context.Context, tx pgx.Tx, userID string, payload CategoryProposalPayload) error {
-	tag, err := tx.Exec(ctx, `update categories set name = $3, description = nullif($4, ''), default_tags=$5,default_values=$6,updated_at = now()
-		where id = $1 and user_id = $2`, payload.CategoryID, userID, payload.Name, payload.Description, nonNilTags(payload.DefaultTags), payload.DefaultValues)
+	tag, err := tx.Exec(ctx, `update categories set name = $3, description = nullif($4, ''), default_tags=$5,default_values=$6,intake_config=coalesce($7::jsonb,intake_config),updated_at = now()
+		where id = $1 and user_id = $2`, payload.CategoryID, userID, payload.Name, payload.Description, nonNilTags(payload.DefaultTags), payload.DefaultValues, payload.IntakeConfig)
 	if err != nil {
 		return err
 	}

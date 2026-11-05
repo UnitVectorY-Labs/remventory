@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"github.com/UnitVectorY-Labs/remventory/internal/authority"
+	"github.com/UnitVectorY-Labs/remventory/internal/store"
 	"time"
 )
 
@@ -48,4 +49,16 @@ func (s *Service) Card(ctx context.Context, g authority.Graph) (authority.Displa
 	id, err := s.Store.CanonicalID(ctx, g.Root)
 	card.EntityID = id
 	return card, err
+}
+
+// Runtime type preferences choose verified source fields without copying source facts into items.
+func (s *Service) CardForPolicy(ctx context.Context, g authority.Graph, policy *store.IntakeConfig) (authority.DisplayCard, error) {
+	if policy != nil && len(policy.DisplayFields[g.Root.Provider]) > 0 {
+		p := authority.DisplayPlan{Layout: "identity", Fields: policy.DisplayFields[g.Root.Provider]}
+		c := authority.RenderCard(g, p, true)
+		id, err := s.Store.CanonicalID(ctx, g.Root)
+		c.EntityID = id
+		return c, err
+	}
+	return s.Card(ctx, g)
 }

@@ -15,3 +15,18 @@ func TestUncertaintyOutcomes(t *testing.T) {
 		}
 	}
 }
+
+func TestCurationKeepsConflictingAndEditionFacts(t *testing.T) {
+	for _, test := range []struct {
+		own    any
+		source string
+		want   bool
+	}{
+		{"Johnny Mathis", "Johnny Mathis", true}, {"Album: Name", "album name", true}, {float64(1969), "1969", true},
+		{float64(1969), "1969-01-01", false}, {"Limited edition", "Standard edition", false}, {"My copy has a handwritten note", "Some source description", false},
+	} {
+		if got := sameDescriptiveValue(test.own, test.source); got != test.want {
+			t.Fatal(test, got)
+		}
+	}
+}

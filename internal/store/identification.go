@@ -7,12 +7,17 @@ import (
 	"fmt"
 	"github.com/UnitVectorY-Labs/remventory/internal/authority"
 	"github.com/jackc/pgx/v5"
+	"strings"
 	"time"
 )
 
 type IdentificationInput struct {
-	Text       string `json:"text"`
-	TemplateID string `json:"template_id,omitempty"`
+	DefaultTags   []string        `json:"default_tags,omitempty"`
+	DefaultValues json.RawMessage `json:"default_values,omitempty"`
+	FieldKeys     []string        `json:"field_keys,omitempty"`
+	Policy        *IntakeConfig   `json:"policy,omitempty"`
+	Text          string          `json:"text"`
+	TemplateID    string          `json:"template_id,omitempty"`
 }
 type IdentificationMatch struct {
 	Display    authority.DisplayPlan `json:"display"`
@@ -65,6 +70,42 @@ func scanJob(row rowScanner) (IdentificationJob, error) {
 	return j, err
 }
 func (s *Store) CreateIdentification(ctx context.Context, category, itemID string, input IdentificationInput, photos []IdentificationPhoto) (IdentificationJob, error) {
+	if input.Policy == nil {
+		var profile Category
+		var e error
+		if input.TemplateID != "" {
+			profile, e = s.GetCategoryDefinition(ctx, input.TemplateID)
+		} else if itemID != "" {
+			var item Item
+			item, e = s.GetItem(ctx, itemID)
+			if e == nil {
+				profile, e = s.ProfileForItem(ctx, item)
+			}
+		} else {
+			var profiles []Category
+			profiles, e = s.ListCategories(ctx, 200, 0)
+			for _, p := range profiles {
+				if strings.EqualFold(p.Name, category) {
+					profile = p
+					break
+				}
+			}
+		}
+		if e != nil {
+			return IdentificationJob{}, e
+		}
+		if profile.ID != "" {
+			input.TemplateID = profile.ID
+			input.DefaultTags = profile.DefaultTags
+			input.DefaultValues = profile.DefaultValues
+			for _, field := range profile.Attributes {
+				input.FieldKeys = append(input.FieldKeys, field.Key)
+			}
+			policy := profile.IntakeConfig
+			input.Policy = &policy
+			category = profile.Name
+		}
+	}
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return IdentificationJob{}, err
@@ -241,7 +282,22 @@ func (s *Store) ProposeIdentification(ctx context.Context, p IdentificationPropo
 		if len(p.Attributes) == 0 {
 			p.Attributes = []byte(`{}`)
 		}
-		prepared, err := s.prepareItem(ctx, ItemProposalPayload{Operation: "create", Title: p.Title, Tags: p.Tags, Attributes: p.Attributes})
+		templateID := j.Input.TemplateID
+		if len(j.Input.DefaultValues) > 0 {
+			values := map[string]any{}
+			_ = json.Unmarshal(j.Input.DefaultValues, &values)
+			var entered map[string]any
+			if err := json.Unmarshal(p.Attributes, &entered); err != nil {
+				return Proposal{}, err
+			}
+			for k, v := range entered {
+				values[k] = v
+			}
+			p.Attributes, _ = json.Marshal(values)
+			p.Tags = append(append([]string{}, j.Input.DefaultTags...), p.Tags...)
+			templateID = ""
+		}
+		prepared, err := s.prepareItem(ctx, ItemProposalPayload{Operation: "create", CategoryID: templateID, Title: p.Title, Tags: p.Tags, Attributes: p.Attributes})
 		if err != nil {
 			return Proposal{}, err
 		}

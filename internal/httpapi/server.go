@@ -46,6 +46,9 @@ func New(opts Options) http.Handler {
 		images:  opts.Images,
 	}
 
+	mux.HandleFunc("GET /api/items/{id}/catalogue/fields", api.withToken(api.catalogueFieldChoices))
+	mux.HandleFunc("POST /api/items/{id}/catalogue/proposal", api.withToken(api.proposeCatalogue))
+	mux.HandleFunc("POST /api/items/{id}/curate", api.withToken(api.curateItemFields))
 	mux.HandleFunc("GET /healthz", api.health)
 	mux.HandleFunc("GET /api/intake/{id}/status", api.withToken(api.identificationStatus))
 	mux.HandleFunc("GET /api/intake/{id}/cards", api.withToken(api.identificationCards))

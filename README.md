@@ -15,3 +15,7 @@ A visual home inventory with Remy, your hamster librarian. Catalog belongings wi
 - [Setup and configuration](docs/configuration.md)
 - [Using the collection](docs/usage.md)
 - [Experience and organization design](docs/design.md)
+
+See [Managing catalogue links, fields, and runtime item types](docs/data-management.md)
+for manual URL linking, unlinking, source presentation preferences, and Remy's
+reviewed field-curation workflow.

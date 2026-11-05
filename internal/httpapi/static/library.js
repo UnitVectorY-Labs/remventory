@@ -35,7 +35,7 @@ async function loadLibraryMeta() {
   pendingProposals = proposals.proposals || [];
   libraryTypes = graphVocabulary.templates || [];
   const tags = document.querySelector("#tag-filters"); tags.replaceChildren();
-  const broadTags = ["Amiibo", "Vinyl", "Vinyl Records", "Movies", "Video games", "Games", "Hardware", "Books"];
+  const broadTags = [...new Set(libraryTypes.flatMap(type => type.default_tags || []))];
   const browseTags = (facets.tags || []).filter(t => broadTags.includes(t.name));
   const vinyl=browseTags.find(t=>t.name==="Vinyl"),legacyVinyl=browseTags.find(t=>t.name==="Vinyl Records");
   if(vinyl&&legacyVinyl)browseTags.splice(browseTags.indexOf(vinyl.count>=legacyVinyl.count?legacyVinyl:vinyl),1);
@@ -84,7 +84,7 @@ async function showLibrary(page = 0) {
         if (item.images?.length) { const img = el("img"); img.src = (item.images.find(image => image.is_primary) || item.images[0]).thumbnail_url; img.alt = item.title; img.loading = "lazy"; picture.append(img); }
         else { picture.classList.add("picture-placeholder"); picture.append(icon("box")); }
         const info = el("div", "inventory-info"); info.append(el("h2", "", item.title));
-        const tags = el("div", "card-tags"); for (const tag of (item.tags || []).filter(t => ["Amiibo","Vinyl","Vinyl Records","Movies","Video games","Games","Hardware","Books","Box set"].includes(t)).slice(0, 2)) tags.append(el("span", "tag", tag)); info.append(tags);
+        const tags = el("div", "card-tags"); for (const tag of (item.tags || []).filter(t => libraryTypes.some(type => (type.default_tags || []).includes(t))).slice(0, 2)) tags.append(el("span", "tag", tag)); info.append(tags);
         const status = result.identification_status?.[item.id] || 'unidentified';
         const statusLabels = {identified:'Identified',review:'Needs review',processing:'Identifying…',unidentified:'Not identified'};
         card.dataset.identification = status;
@@ -181,7 +181,7 @@ async function openCatalog(existing = null, startingTemplate = null) {
       status.textContent = "Template applied.";
     };
     templates.onchange = () => { selectedTemplate = libraryTypes.find(template => template.id === templates.value) || null; if (selectedTemplate) applyTemplate(selectedTemplate); layout.hidden = !templates.value; review.disabled = !templates.value; };
-    templateStep.append(el("h3", "", "1. Start with a template"), labeled("What are you adding?", templates), el("p", "muted", "Remy will use your template’s fields and defaults when reading the photo."));
+    templateStep.append(el("h3", "", "1. Start with a template"), labeled("What are you adding?", templates), el("p", "muted", "The same fields, defaults and catalogue settings apply to manual entry and Remy’s photo review."));
     if (startingTemplate) { templates.value = startingTemplate.id; applyTemplate(startingTemplate); }
     else layout.hidden = true;
   }
@@ -206,43 +206,19 @@ async function openCatalog(existing = null, startingTemplate = null) {
       const photo = { key: makeUUID(), file, url: URL.createObjectURL(file), name: file.name, uploadedID: null }; additions.push(photo); if (!primary) primary = photo.key;
     }
     renderPhotos();
-    if (!existing && autoSuggest.checked && additions.length && !identifying) identify.click();
+
   };
   files.onchange = () => { chooseFiles(files.files); files.value = ""; }; camera.onchange = () => chooseFiles(camera.files);
-  const autoSuggest = field("", "checkbox"); autoSuggest.checked = visionConfigured; autoSuggest.disabled = !visionConfigured;
-  const analysisNote = el("p", "analysis-note");
-  const progress = el("div", "photo-analysis-progress"); progress.hidden = true; progress.setAttribute("role", "status"); progress.setAttribute("aria-live", "polite");
-  const progressTitle = el("strong"); const progressMessage = el("p");
-  const spinner = el("span", "photo-analysis-spinner"); spinner.setAttribute("aria-hidden", "true");
-  progress.append(spinner, progressTitle, progressMessage);
-  const identify = button("Suggest details from picture", async () => {
-    if (identifying) return;
-    const target = additions.find(photo => photo.key === primary) || additions[0];
-    if (!target) { status.textContent = "Choose a new picture for Remy to read."; return; }
-    identifying = new AbortController(); identify.disabled = true; review.disabled = true; stop.hidden = false;
-    const controller = identifying;
-    const templatePicker = templateStep.querySelector("select"); if (templatePicker) templatePicker.disabled = true;
-    progress.hidden = false; photos.setAttribute("aria-busy", "true"); identify.textContent = "Reading picture…";
-    progressTitle.textContent = "Remy is reading your picture";
-    progressMessage.textContent = selectedTemplate ? `Using ${selectedTemplate.name} to suggest details. You can keep editing while Remy works.` : "Finding details to suggest. You can keep editing while Remy works.";
-    const waiting = setTimeout(() => { progressMessage.textContent = "Still reading your picture. Some models take a few minutes. You can stop and keep your draft."; }, 15000);
-    status.textContent = "";
-    const body = new FormData(); body.append("image", target.file);
-    if (selectedTemplate) body.append("template_id", selectedTemplate.id);
-    try {
-      const suggestion = await api("/api/photos/identify", { method: "POST", body, signal: identifying.signal });
-      if (controller.signal.aborted || !catalogModal.open) return;
-      const next = { ...(suggestion.attributes || {}), ...editor.read() }; if (suggestion.title && !next.title) next.title = suggestion.title;
-      replaceValues(next); tags.value = [...new Set([...parseTags(), ...(suggestion.tags || [])])].join(", "); suggestTagFields();
-      analysisNote.replaceChildren(el("span", "", `Remy’s unverified suggestions: ${readableAnswer(suggestion.notes || "Please check the details before saving.").message}`));
-      const extra = readableAnswer(suggestion.notes || "").details; if (extra.length) analysisNote.append(technicalDetails(extra, "Identification details")); status.textContent = "Review and edit Remy’s suggestions.";
-    } catch (error) { status.textContent = error.name === "AbortError" ? "Stopped reading. Your draft is still here." : error.message; }
-    finally { clearTimeout(waiting); identifying = null; identify.disabled = !visionConfigured; identify.textContent = "Suggest details from picture"; review.disabled = false; stop.hidden = true; progress.hidden = true; photos.setAttribute("aria-busy", "false"); if (templatePicker) templatePicker.disabled = false; }
-  });
-  const stop = button("Stop reading", () => identifying?.abort()); stop.hidden = true;
-  identify.disabled = !visionConfigured;
-  if (!visionConfigured) analysisNote.textContent = "Photo identification needs setup. You can still add pictures and enter details yourself.";
-  photos.append(el("h3", "", existing ? "Pictures" : "2. Add pictures"), gallery, progress, stop, labeled("Choose pictures", files), camera, button("Take a picture", () => camera.click(), "secondary", "camera"), identify, el("p", "muted", "JPEG, PNG, GIF · 12 MB per picture"), ...(!existing ? [labeled("Let Remy suggest details when I add a photo", autoSuggest)] : []), analysisNote); renderPhotos();
+  const analysisNote=el('p','analysis-note',visionConfigured?'Use Remy’s catalogue review to identify these pictures; verified metadata will stay linked to its source.':'Photo identification needs setup. You can still add pictures and enter details yourself.');
+  const identify=button('Find catalogue matches with Remy',async()=>{
+    if(identifying)return;
+    if(existing){if(additions.length){status.textContent='Save your new pictures first, then ask Remy to identify them.';return;}catalogModal.close();researchItem(existing);return;}
+    if(!additions.length){status.textContent='Choose one or more pictures first.';return;}
+    identifying=new AbortController();identify.disabled=true;review.disabled=true;status.textContent='Saving the photos for Remy’s catalogue review…';setDialog({icon:'thinking',message:'I’ll compare these photos with your item type’s catalogues. You’ll choose the match.'});
+    const body=new FormData();body.append('category',selectedTemplate?.name||'Other');if(selectedTemplate)body.append('template_id',selectedTemplate.id);body.append('text',JSON.stringify(editor.read()));for(const photo of additions)body.append('images',photo.file);
+    try{const job=await api('/api/intake',{method:'POST',body,signal:identifying.signal});catalogModal.close();openIdentification(job.id);}catch(error){status.textContent=error.message;}finally{identifying=null;identify.disabled=!visionConfigured;review.disabled=false;}
+  },'secondary');identify.disabled=!visionConfigured;
+  photos.append(el('h3','',existing?'Pictures':'2. Add pictures'),gallery,labeled('Choose pictures',files),camera,button('Take a picture',()=>camera.click(),'secondary','camera'),identify,analysisNote);renderPhotos();
   layout.append(photos, details); const summary = el("div", "catalog-review"); summary.hidden = true;
   const review = el("button", "", "Review changes →"); review.type = "submit";
   review.disabled = !existing && !startingTemplate;
@@ -345,8 +321,16 @@ async function openTypeEditor(existing = null) {
   const content = el("form", "type-form"); const name = field(existing?.name || ""); name.required = true; const tags = field((existing?.default_tags || []).join(", ")); tags.placeholder = "Games, Wii";
   const description = field(existing?.description || "");
   const editor = fieldSetEditor(existing?.default_values || {}, (existing?.attributes || []).map(field => field.key)); content.append(labeled("Template name", name), labeled("Description", description), labeled("Default tags", tags), el("h3", "", "Starting fields and defaults"), editor.root);
+  const config=existing?.intake_config||{}, sources=el('fieldset','type-sources');sources.append(el('legend','','Catalogue sources Remy may search'));
+  const enabled=new Set(config.providers||['amiibo','musicbrainz','wikidata']), checks=new Map(), displayInputs=new Map();
+  for(const [key,label]of [['amiibo','Amiibo'],['musicbrainz','MusicBrainz'],['wikidata','Wikidata']]){
+    const check=field('','checkbox');check.checked=enabled.has(key);checks.set(key,check);sources.append(labeled(label,check));
+    const paths=field((config.display_fields?.[key]||[]).join(', '));paths.placeholder='Leave blank for Remy to choose';displayInputs.set(key,paths);sources.append(labeled(`${label}: catalogue fields to display (up to four source paths)`,paths));
+  }
+  const prompt=el('textarea');prompt.rows=6;prompt.value=config.prompt||'';prompt.placeholder='What should Remy look for, compare, and ask you to verify for this type?';
+  content.append(sources,labeled('Remy’s identification instructions',prompt),el('p','muted','Fields and defaults are copied into new drafts. Catalogue preferences also apply when browsing matching tags. Source facts remain separate from your own fields.'));
   const submit = el("button", "", "Review template"); submit.type = "submit"; content.append(submit);
-  content.onsubmit = event => { event.preventDefault(); const keys = editor.keys(); reviewDefinition("/api/proposals/category", { operation: existing ? "update" : "create", ...(existing ? {category_id: existing.id} : {}), name: name.value.trim(), description: description.value.trim(), default_tags: tags.value.split(",").map(value => value.trim()).filter(Boolean), default_values: editor.read(), attributes: keys.map(key => ({ ...graphVocabulary.fields.find(field => field.key === key), required: false })) }, "Review creation template", restore); };
+  content.onsubmit = event => { event.preventDefault(); const keys = editor.keys(); reviewDefinition("/api/proposals/category", { operation: existing ? "update" : "create", ...(existing ? {category_id: existing.id} : {}), name: name.value.trim(), description: description.value.trim(), default_tags: tags.value.split(",").map(value => value.trim()).filter(Boolean), default_values: editor.read(), intake_config:{providers:[...checks].filter(([,check])=>check.checked).map(([key])=>key),prompt:prompt.value,display_fields:Object.fromEntries([...displayInputs].map(([key,input])=>[key,input.value.split(',').map(v=>v.trim()).filter(Boolean)]))}, attributes: keys.map(key => ({ ...graphVocabulary.fields.find(field => field.key === key), required: false })) }, "Review creation template", restore); };
   function restore() { catalogModal.replaceChildren(dialogHeader(existing ? "Edit template" : "Create a starting template"), content); catalogModal.oncancel = null; }
   restore(); catalogModal.onclose = null; if (!catalogModal.open) catalogModal.showModal();
 }
@@ -374,7 +358,7 @@ async function showAdmin() {
   try {
     await loadLibraryMeta();
     if (generation !== libraryGeneration) return;
-    stage.replaceChildren(el("p", "muted", "Define the common fields, starting templates, and tag defaults used across your collection. Changes are reviewed before saving."));
+    stage.replaceChildren(el("p", "muted", "Manage the common fields, item types and tag defaults used by both manual entry and Remy’s capture workflow. Changes are reviewed before saving."));
     const fields = el("article", "card"); const fieldHeading = el("div", "card-heading");
     fieldHeading.append(el("h2", "", "Common fields"), button("New common field", () => openVocabularyEditor("fields"), "secondary", "plus"));
     fields.append(fieldHeading, el("p", "muted", "Reusable details such as Year, Condition, or Purchase price. Every item can use any approved field."));
@@ -382,8 +366,8 @@ async function showAdmin() {
     for (const definition of graphVocabulary.fields) { const row = el("div", "admin-row"); row.append(el("strong", "", definition.label), el("span", "muted", prettyKey(definition.data_type))); definitions.append(row); }
     fields.append(definitions);
     const templates = el("article", "card"); const heading = el("div", "card-heading");
-    heading.append(el("h2", "", "Templates"), button("New template", () => openTypeEditor(), "secondary", "plus"));
-    templates.append(heading, el("p", "muted", "Starting fields, values, and tags for new items. Editing a template affects future drafts only."));
+    heading.append(el("h2", "", "Item types & templates"), button("New template", () => openTypeEditor(), "secondary", "plus"));
+    templates.append(heading, el("p", "muted", "One configuration for capture defaults, suggested fields, catalogue sources, Remy’s instructions and displayed catalogue facts."));
     if (!libraryTypes.length) templates.append(el("p", "muted", "No templates yet. Create one for belongings you add often."));
     for (const template of libraryTypes) {
       const row = el("div", "admin-row"); const info = el("div");

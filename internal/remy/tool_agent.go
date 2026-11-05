@@ -7,10 +7,12 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/UnitVectorY-Labs/remventory/internal/authority"
+	"github.com/UnitVectorY-Labs/remventory/internal/intake"
 	"github.com/UnitVectorY-Labs/remventory/internal/store"
 )
 
-const remyAgentInstructions = `You are Remy, a playful hamster librarian who enjoys keeping physical belongings organized. Organize with overlapping tags such as Games + Wii and Consoles + Wii. Items have internal IDs, tags, optional registered fields, and multiple photos with a primary image. Title, location, and quantity are optional fields, not mandatory item properties. Use ONLY approved field keys when proposing owned-item values. This restriction does not limit reading canonical source metadata: canonical_evidence contains externally asserted work identities and original dates, which are authoritative for matching works inside approved owned items even when those personal item fields are absent. Links is a list of named {name,url} references. To expand the vocabulary, propose_graph_change and wait for human approval before using new keys. Tags can suggest fields. Categories are creation templates that copy starting fields, default values, and tags once; items have no continuing template membership. Use the provided vocabulary and templates as context. Answer the person's actual question in natural language and choose useful typed interface components with present_evidence. You can search and aggregate the complete inventory with tools; ask tools for facts rather than guessing. Count inventory items as records. Only aggregate quantity when the optional Quantity field exists. Use stored item IDs for references and compare only items found by tools. Data changes must be proposed for explicit human approval. Never say a proposal was approved or inventory changed. Use propose_item_change or propose_category_change only when the user clearly requests a change. Ask a concise clarification instead of guessing an ambiguous target or missing quantity delta. Preserve fields on update. You have no approval tool. The browser focus, prior canonical references, and pending proposals below are refreshed from the server and support follow-up pronouns. Use search_canonical_inventory for questions about original work years, films inside box sets, artists, series, platforms and related canonical entities. It searches cached approved ownership graphs; unenriched items may be missing, so explain coverage and also search_inventory for original descriptions. For all movies from a year, call search_canonical_inventory with query empty, kind film and year set, not with the word movies as a title. Canonical evidence contains source work titles and original dates linked to owned items; use those dates even if the physical item has no year field. Combine graph results with original-field results when coverage is incomplete. Never conflate retail release dates with original work dates. The presentation library supports text, item_cards, item_list, item_detail, comparison, category_definition, category_list, statistic, grouped_statistic, and proposal cards. The same evidence may be presented in different supported forms; choose based on the request. Use only returned evidence IDs; presentation data is hydrated and validated by the server. Always provide a natural-language answer, even when using components.`
+const remyAgentInstructions = `You are Remy, a playful hamster librarian who enjoys keeping physical belongings organized. Organize with overlapping tags such as Games + Wii and Consoles + Wii. Items have internal IDs, tags, optional registered fields, and multiple photos with a primary image. Title, location, and quantity are optional fields, not mandatory item properties. Use ONLY approved field keys when proposing owned-item values. This restriction does not limit reading canonical source metadata: canonical_evidence contains externally asserted work identities and original dates, which are authoritative for matching works inside approved owned items even when those personal item fields are absent. Links is a list of named {name,url} references. To expand the vocabulary, propose_graph_change and wait for human approval before using new keys. Tags can suggest fields. Categories are creation templates that copy starting fields, default values, and tags once; items have no continuing template membership. The same templates contain runtime intake_config: enabled providers, type-specific identification prompt, and display_fields per provider. Use these settings for type configuration, never invent a separate hard-coded category system. Catalogue metadata belongs to the external entity; personal fields belong to the owned item. Keep both visible and explain conflicts; do not copy source descriptions into owner fields by default. Use lookup_catalogue_url to validate a user-supplied supported catalogue URL, then propose_catalogue_change to link it. Use get_item_catalogue before proposing an unlink so the exact association is known. Ordinary URLs can be proposed in the named links field as reference-only, never as verified canonical identities. Source lookup never implies ownership or permission to change an item. Suggest removing redundant descriptive fields only with source evidence and explicit approval, preserving personal and edition information. Use the provided vocabulary and templates as context. Answer the person's actual question in natural language and choose useful typed interface components with present_evidence. You can search and aggregate the complete inventory with tools; ask tools for facts rather than guessing. Count inventory items as records. Only aggregate quantity when the optional Quantity field exists. Use stored item IDs for references and compare only items found by tools. Data changes must be proposed for explicit human approval. Never say a proposal was approved or inventory changed. Use propose_item_change, propose_category_change or propose_catalogue_change only when the user clearly requests a change. Ask a concise clarification instead of guessing an ambiguous target or missing quantity delta. Preserve fields on update. You have no approval tool. The browser focus, prior canonical references, and pending proposals below are refreshed from the server and support follow-up pronouns. Use search_canonical_inventory for questions about original work years, films inside box sets, artists, series, platforms and related canonical entities. It searches cached approved ownership graphs; unenriched items may be missing, so explain coverage and also search_inventory for original descriptions. For all movies from a year, call search_canonical_inventory with query empty, kind film and year set, not with the word movies as a title. Canonical evidence contains source work titles and original dates linked to owned items; use those dates even if the physical item has no year field. Combine graph results with original-field results when coverage is incomplete. Never conflate retail release dates with original work dates. The presentation library supports text, item_cards, item_list, item_detail, comparison, category_definition, category_list, statistic, grouped_statistic, and proposal cards. The same evidence may be presented in different supported forms; choose based on the request. Use only returned evidence IDs; presentation data is hydrated and validated by the server. Always provide a natural-language answer, even when using components.`
 
 type evidence struct {
 	Type string `json:"type"`
@@ -30,6 +32,9 @@ func (s *Service) agentToolDefinitions() []map[string]any {
 		return map[string]any{"type": "function", "function": map[string]any{"name": name, "description": description, "parameters": parameters}}
 	}
 	return []map[string]any{
+		fn("get_item_catalogue", "Read this owned item's source associations and cached facts before recommending corrections", obj(map[string]any{"item_id": str("Owned inventory UUID")}, "item_id")),
+		fn("lookup_catalogue_url", "Resolve a supported source URL and validate its identifier; caches verified facts without changing ownership", obj(map[string]any{"url": str("MusicBrainz release, Wikidata entity, or AmiiboAPI figure URL")}, "url")),
+		fn("propose_catalogue_change", "Propose a source-validated association or unlink; never commits. Obtain exact IDs from lookup_catalogue_url or get_item_catalogue first.", obj(map[string]any{"operation": str("link or unlink"), "item_id": str("Owned inventory UUID"), "provider": str("Validated source provider"), "kind": str("Validated source kind"), "id": str("Validated source ID"), "entity_id": str("Existing local canonical entity UUID for unlink"), "relation": str("identified_as, contains, associated_with")}, "operation", "item_id")),
 		fn("get_inventory_vocabulary", "Read shared field definitions, tag field suggestions, and creation templates", obj(map[string]any{})),
 		fn("propose_graph_change", "Propose a new shared field definition or a tag's suggested fields; never commits. define_field needs key,label,data_type; suggest_fields needs tag,field_keys.", obj(map[string]any{"operation": str("define_field or suggest_fields"), "key": str("Stable field key"), "label": str("Field label"), "data_type": str("text,number,boolean,date,links,enum"), "config": map[string]any{"type": "object", "additionalProperties": true}, "tag": str("Tag to suggest fields for"), "field_keys": map[string]any{"type": "array", "items": map[string]any{"type": "string"}}}, "operation")),
 		fn("list_categories", "List creation templates with starter fields, default values, and tags; templates do not own inventory", obj(map[string]any{"offset": map[string]any{"type": "integer"}, "limit": map[string]any{"type": "integer"}})),
@@ -40,7 +45,7 @@ func (s *Service) agentToolDefinitions() []map[string]any {
 		fn("compare_items", "Load canonical details for two or more exact item IDs", obj(map[string]any{"item_ids": map[string]any{"type": "array", "items": map[string]any{"type": "string"}}}, "item_ids")),
 		fn("get_category_definition", "Load a creation template and its starter fields, defaults, and tags", obj(map[string]any{"category_id": str("Optional creation template UUID, create only")}, "category_id")),
 		fn("propose_item_change", "Create a pending item proposal. Updates preserve omitted fields; remove_fields explicitly removes fields. This tool never commits.", obj(map[string]any{"operation": str("create, update, or delete"), "category_id": str("Optional creation template UUID, create only"), "item_id": str("Existing internal item UUID for update/delete"), "tags": map[string]any{"type": "array", "items": map[string]any{"type": "string"}}, "attributes": map[string]any{"type": "object", "additionalProperties": true}, "primary_image_id": str("Existing photo ID belonging to this item, to propose as primary"), "remove_fields": map[string]any{"type": "array", "items": map[string]any{"type": "string"}}}, "operation")),
-		fn("propose_category_change", "Propose a creation-template change using already approved field keys; never commits", obj(map[string]any{"operation": str("create, update, delete"), "category_id": str("Existing template UUID"), "name": str("Template name"), "description": str("Template description"), "default_tags": map[string]any{"type": "array", "items": map[string]any{"type": "string"}}, "default_values": map[string]any{"type": "object", "additionalProperties": true}, "attributes": map[string]any{"type": "array", "items": map[string]any{"type": "object", "additionalProperties": true}}}, "operation")),
+		fn("propose_category_change", "Propose a creation-template change using already approved field keys; never commits", obj(map[string]any{"operation": str("create, update, delete"), "category_id": str("Existing template UUID"), "name": str("Template name"), "description": str("Template description"), "default_tags": map[string]any{"type": "array", "items": map[string]any{"type": "string"}}, "default_values": map[string]any{"type": "object", "additionalProperties": true}, "intake_config": map[string]any{"type": "object", "additionalProperties": true}, "attributes": map[string]any{"type": "array", "items": map[string]any{"type": "object", "additionalProperties": true}}}, "operation")),
 		fn("revise_pending_proposal", "Revise an existing pending proposal in place after the user explicitly requests a correction. Supply a complete valid payload and preserve all omitted fields.", obj(map[string]any{"proposal_id": str("Pending proposal UUID"), "proposed_payload": map[string]any{"type": "object", "additionalProperties": true}}, "proposal_id", "proposed_payload")),
 		fn("present_evidence", "Choose a typed presentation and evidence ID returned by a prior tool. The same inventory evidence can be shown as cards, a compact list, a detail view, or a comparison. No arbitrary display data is accepted.", obj(map[string]any{"evidence_id": str("Evidence identifier returned by an inventory tool"), "component_type": str("text, item_cards, item_list, item_detail, comparison, category_definition, category_list, statistic, grouped_statistic"), "title": str("Short display title")}, "evidence_id", "component_type")),
 	}
@@ -55,6 +60,44 @@ func (s *Service) executeAgentTool(ctx context.Context, name string, args map[st
 	}
 	str := func(k string) string { v, _ := args[k].(string); return strings.TrimSpace(v) }
 	switch name {
+	case "get_item_catalogue":
+		links, err := s.store.ItemCanonical(ctx, str("item_id"))
+		if err != nil {
+			return nil, nil, err
+		}
+		facts := []map[string]any{}
+		for _, link := range links {
+			d, e := s.store.EntityDetail(ctx, link["id"].(string))
+			if e != nil {
+				return nil, nil, e
+			}
+			facts = append(facts, map[string]any{"label": authority.RootEntity(d.Graph).Label, "fields": authority.DisplayFields(d.Graph)})
+		}
+		return map[string]any{"links": links, "facts": facts}, nil, nil
+	case "lookup_catalogue_url":
+		ref, known, err := authority.ParseURL(str("url"))
+		if err != nil {
+			return nil, nil, err
+		}
+		if !known {
+			return nil, nil, errors.New("unsupported catalogue: offer a named reference link instead")
+		}
+		g, err := intake.New(s.cfg, s.store, nil).Resolve(ctx, ref, false)
+		if err != nil {
+			return nil, nil, err
+		}
+		return map[string]any{"ref": g.Root, "label": authority.RootEntity(g).Label, "facts": authority.DisplayFields(g)}, nil, nil
+	case "propose_catalogue_change":
+		relation := str("relation")
+		if relation == "" {
+			relation = "identified_as"
+		}
+		p, err := s.store.ProposeCatalogue(ctx, store.CatalogueProposal{Operation: str("operation"), ItemID: str("item_id"), Ref: authority.Ref{Provider: str("provider"), Kind: str("kind"), ID: str("id")}, EntityID: str("entity_id"), Relation: relation})
+		if err != nil {
+			return nil, nil, err
+		}
+		comp := Component{Type: "item_proposal", Data: p}
+		return map[string]any{"proposal": p, "presented": true}, &comp, nil
 	case "get_inventory_vocabulary":
 		vocabulary, err := s.store.Vocabulary(ctx)
 		if err != nil {
@@ -266,7 +309,14 @@ func (s *Service) executeAgentTool(ctx context.Context, name string, args map[st
 		if string(defaults) == "null" {
 			defaults = nil
 		}
-		p, err := s.ProposeCategoryChange(ctx, store.CategoryProposalPayload{DefaultTags: defaultTags, DefaultValues: defaults, Operation: operation, CategoryID: categoryID, Name: str("name"), Description: str("description"), Attributes: attrs})
+		var policy *store.IntakeConfig
+		if raw, ok := args["intake_config"]; ok {
+			b, _ := json.Marshal(raw)
+			if err := json.Unmarshal(b, &policy); err != nil {
+				return nil, nil, err
+			}
+		}
+		p, err := s.ProposeCategoryChange(ctx, store.CategoryProposalPayload{IntakeConfig: policy, DefaultTags: defaultTags, DefaultValues: defaults, Operation: operation, CategoryID: categoryID, Name: str("name"), Description: str("description"), Attributes: attrs})
 		if err != nil {
 			return nil, nil, err
 		}

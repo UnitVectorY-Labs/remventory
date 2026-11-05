@@ -124,3 +124,23 @@ secrets, worker processes, buckets or Kubernetes configuration are needed. Owner
 photos remain the UI artwork. Presentation choices never execute model HTML and
 never replace source facts or owned-item attributes. Existing tag normalization
 is performed through proposals with exact before/after field checks.
+
+## Unified catalogue and type management (migration 009)
+
+Migration 009 adds `categories.intake_config`, upgrades the existing template
+configuration, seeds missing starter types, and suggests existing common personal
+fields in those templates. It preserves every owned item's title, attributes,
+photos and canonical associations. No production back-catalog field cleanup runs
+automatically; Remy's cleanup suggestions require owner selection and approval.
+
+The app and worker use the same image. No new Kubernetes resources, credentials,
+object-storage layout, or provider dependency is needed. Manual catalogue changes
+use the new `catalogue_change` proposal kind; generic references and field removals
+use existing item proposals. Both remain explicit-confirmation operations.
+
+Take the normal database backup before rollout. The migration is additive and can
+remain in place if the application image is rolled back. Finish or reject pending
+`catalogue_change` proposals before rolling back to an older binary that does not
+understand that proposal kind. Approved links remain compatible with the older
+schema. Type-policy settings are ignored by older app images. Existing inventory
+and source caches need no destructive migration.

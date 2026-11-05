@@ -218,6 +218,11 @@ function proposalCard(proposal, title) {
   appendDetail(details, "Tag", payload.tag);
   appendDetail(details, "Suggested fields", (payload.field_keys || []).join(", "));
   appendDetail(details, "Default tags", (payload.default_tags || []).join(", "));
+  if (payload.intake_config) {
+    appendDetail(details, 'Catalogue sources', (payload.intake_config.providers || []).join(', ') || 'None');
+    appendDetail(details, 'Remy instructions', payload.intake_config.prompt);
+    for(const [provider,paths]of Object.entries(payload.intake_config.display_fields || {})) appendDetail(details, `${provider} display fields`, paths.join(', ') || 'Remy chooses');
+  }
   if (payload.default_values) card.append(attributeValueTable(payload.default_values,"Starting values"));
   if (payload.primary_image_id) { const preview = document.createElement("img"); preview.className="proposal-picture"; preview.src=`/api/images/${encodeURIComponent(payload.primary_image_id)}/thumbnail?v=2`; preview.alt="Proposed primary picture"; card.append(preview); }
 
@@ -452,12 +457,11 @@ function itemDetail(data) {
 }
 
 function openItemDetail(item, category) {
-  renderResponse({
-    state: "completed",
-    summary: `Details for ${item.title}.`,
-    components: [{ type: "item_detail", data: { item, category } }],
-  });
-  setDialog({ icon: "ready", message: `Here are the details for ${item.title}. You can add a picture here too.` });
+  if (typeof setWorkspace === "function") setWorkspace("collection");
+  if (typeof libraryGeneration !== "undefined") ++libraryGeneration;
+  currentResponse={state:"completed",components:[{type:"item_detail",data:{item,category}}]};
+  stage.replaceChildren(itemDetail({item,category}));
+  setDialog({icon:"thinking",message:"I’m gathering the linked facts for your copy."});
 }
 
 function categoryList(categories) {
@@ -528,6 +532,7 @@ function attributeValueTable(values, title, previousValues = null) {
   section.className = "data-section";
   section.innerHTML = `<h3>${escapeHTML(title)}</h3>`;
   const entries = Object.entries(values || {});
+  if(previousValues) for(const key of Object.keys(previousValues)) if(!Object.hasOwn(values || {},key)) entries.push([key,undefined]);
   if (!entries.length) {
     section.insertAdjacentHTML("beforeend", `<p class="summary">No details were provided.</p>`);
     return section;
@@ -542,9 +547,10 @@ function attributeValueTable(values, title, previousValues = null) {
     const row = document.createElement("tr");
     if (showChanges) {
       const previous = previousValues[key];
-      const changed = !Object.prototype.hasOwnProperty.call(previousValues, key) || !sameValue(previous, value);
+      const removed = !Object.hasOwn(values || {},key);
+      const changed = removed || !Object.prototype.hasOwnProperty.call(previousValues, key) || !sameValue(previous, value);
       if (changed) row.className = "changed-row";
-      row.innerHTML = `<td>${escapeHTML(prettyKey(key))}</td><td>${escapeHTML(formatValue(previous))}</td><td>${escapeHTML(formatValue(value))}</td><td>${changed ? '<span class="change-badge">Will update</span>' : '<span class="unchanged">Unchanged</span>'}</td>`;
+      row.innerHTML = `<td>${escapeHTML(prettyKey(key))}</td><td>${escapeHTML(formatValue(previous))}</td><td>${escapeHTML(formatValue(value))}</td><td>${removed ? '<span class="change-badge">Will remove</span>' : changed ? '<span class="change-badge">Will update</span>' : '<span class="unchanged">Unchanged</span>'}</td>`;
     } else {
       row.innerHTML = `<td>${escapeHTML(prettyKey(key))}</td><td>${escapeHTML(formatValue(value))}</td>`;
     }
@@ -772,7 +778,7 @@ function setRemyImage(stateName) {
 function operationLabel(operation) { return ({ create: "Add", update: "Update", delete: "Delete", quantity_adjust: "Adjust quantity" })[operation] || operation; }
 function signed(value) { return Number(value) > 0 ? `+${value}` : String(value); }
 function prettyKey(key) { return String(key || "").replaceAll("_", " ").replace(/\b\w/g, (letter) => letter.toUpperCase()); }
-function formatValue(value) { if (value === undefined || value === null || value === "") return "—"; if (typeof value === "boolean") return value ? "Yes" : "No"; return String(value); }
+function formatValue(value) { if (value === undefined || value === null || value === "") return "—"; if (typeof value === "boolean") return value ? "Yes" : "No"; if(Array.isArray(value))return value.length?value.map(v=>v&&typeof v==='object'?(v.name&&v.url?`${v.name}: ${v.url}`:JSON.stringify(v)):String(v)).join(' · '):'None'; if(typeof value==='object')return JSON.stringify(value); return String(value); }
 function sameValue(left, right) { return JSON.stringify(left) === JSON.stringify(right); }
 function escapeHTML(value) { return String(value).replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;").replaceAll('"', "&quot;").replaceAll("'", "&#039;"); }
 function enumOptions(attribute) {

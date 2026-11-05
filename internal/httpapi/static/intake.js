@@ -37,6 +37,7 @@ function flowScreen(step, title, description) {
     const node = el('span', index === step ? 'current' : index < step ? 'complete' : '', `${index + 1}. ${label}`);
     if (index === step) node.setAttribute('aria-current', 'step'); progress.append(node);
   });
+  setDialog({icon: /Saved/.test(title)?'celebrating':/identifying|Preparing|Starting/.test(title)?'thinking':'ready',message: step===2?'Let’s check the identity and choose the right version together.': description||title});
   const heading = el('header', 'flow-heading'); heading.append(el('h2', '', title));
   if (description) heading.append(el('p', 'muted', description));
   const body = el('div', 'flow-body'), actions = el('footer', 'flow-actions');
@@ -83,23 +84,27 @@ function rememberJob(id) { const url = new URL(location.href); url.searchParams.
 function releaseDraft() { for (const p of flow.photos || []) URL.revokeObjectURL(p.url); }
 function showCapture(kind = '') {
   if (activeController) return;
-  releaseDraft(); flow = { kind, photos: [], text: '' };
+  releaseDraft(); flow = { kind, profile:libraryTypes.find(p=>p.name===kind), photos: [], text: '' };
   const url = new URL(location.href); url.searchParams.delete('identify'); history.replaceState(null, '', url);
-  if (kind) return photoStep();
+  if (kind && flow.profile) return photoStep();
   return typeStep();
 }
-function typeStep() {
-  const screen = flowScreen(0, 'What are you adding?', 'Choose the kind of thing. Remy will find the details.');
-  const options = el('div', 'kind-grid');
-  for (const [name, hint] of [['Amiibo', 'Nintendo figures and cards'], ['Vinyl', 'Records and pressings'], ['Movies', 'DVD, Blu-ray and box sets'], ['Video games', 'Games and editions'], ['Hardware', 'Consoles and accessories'], ['Other', 'Anything else']]) {
-    const choice = button('', () => { flow.kind = name; photoStep(); }, 'kind-choice');
-    choice.append(el('strong', '', name), el('span', 'muted', hint)); options.append(choice);
+async function typeStep() {
+  const screen = flowScreen(0, 'What are you adding?', 'Choose an item type. Remy will use its fields, catalogue sources and instructions.');
+  screen.body.append(el('p', 'muted', 'Loading your item types…'));
+  try { await loadLibraryMeta(); } catch(e) { flowError(screen.body,e);return; }
+  if(screen.epoch!==flowEpoch)return;
+  const options=el('div','kind-grid');
+  for(const profile of libraryTypes){
+    const choice=button('',()=>{flow.profile=profile;flow.kind=profile.name;photoStep();},'kind-choice');
+    choice.append(el('strong','',profile.name),el('span','muted',profile.description||'Use this type’s fields and catalogue settings'));options.append(choice);
   }
-  screen.body.append(options);
-  screen.actions.append(button('Back to collection', () => showLibrary()), button('Enter details myself', () => openCatalog(), 'plain-button'));
+  screen.body.replaceChildren(options);
+  if(!libraryTypes.length)screen.body.append(el('p','','Create an item type in Administration to get started.'));
+  screen.actions.append(button('Back to collection',()=>showLibrary()),button('Enter details myself',()=>openCatalog(),'plain-button'));
 }
 function photoStep() {
-  const screen = flowScreen(1, `Photograph your ${flow.kind === 'Amiibo' ? 'Amiibo' : 'item'}`, flow.kind === 'Amiibo' ? 'Show the character, pose and base. A second picture of the packaging can help distinguish versions.' : 'Start with the front. Add the back, label or barcode if it helps identify the edition.');
+  const screen = flowScreen(1, `Photograph your ${flow.kind || 'item'}`, 'Show the front and any identifying details: the back, base, label, model number or packaging. Remy will use the instructions for this item type.');
   const files = el('input'); files.type = 'file'; files.multiple = true; files.accept = 'image/jpeg,image/png,image/gif'; files.hidden = true; files.setAttribute('aria-label', 'Choose item photos');
   const camera = el('input'); camera.type = 'file'; camera.accept = 'image/*'; camera.setAttribute('capture', 'environment'); camera.hidden = true;
   const photos = el('div', 'capture-strip'), status = el('p', 'flow-status'); status.setAttribute('role', 'status');
@@ -127,7 +132,7 @@ function photoStep() {
   screen.actions.append(button('← Change type', () => typeStep()), next); render();
   async function uploadDraft() {
     next.disabled = true; status.textContent = 'Saving your photos…';
-    const body = new FormData(); body.append('category', flow.kind); body.append('text', flow.text); flow.photos.forEach(p => body.append('images', p.file));
+    const body = new FormData(); body.append('category', flow.kind); if(flow.profile) body.append('template_id',flow.profile.id); body.append('text', flow.text); flow.photos.forEach(p => body.append('images', p.file));
     try { const job = await api('/api/intake', { method: 'POST', body }); releaseDraft(); flow.photos = []; await openIdentification(job.id); }
     catch (e) { flowError(status, e); next.disabled = false; }
   }
@@ -164,7 +169,7 @@ async function openIdentification(id) {
   try { job = await api(`/api/intake/${id}?compact=1`); } catch (e) { flowError(screen.body, e); return; }
   if (screen.epoch !== flowEpoch) return;
   if(flow.job?.id!==job.id){delete flow.customTitle;delete flow.personalAttributes;}
- flow.job = job; flow.kind = job.category; flow.cards = []; flow.selected = [];
+ flow.job = job; flow.kind = job.category; flow.profile=libraryTypes.find(p=>p.id===job.input?.template_id)||libraryTypes.find(p=>p.name===job.category); flow.cards = []; flow.selected = [];
  document.querySelector('.library-heading h1').textContent=job.item_id?'Find item details':'Add to your collection';
   if (job.state === 'approved') return savedStep(job);
   if (job.state === 'review') return matchStep(job);
@@ -184,11 +189,11 @@ async function openIdentification(id) {
 }
 async function matchStep(job) {
   const screen = flowScreen(2, 'Is this the right item?', 'Check the name, series and version. Choose another suggestion if it fits better.');
-  screen.body.append(jobPhoto(job), el('div', 'processing-status', 'Preparing the relevant details…'));
+  screen.body.append(jobPhoto(job), el('div', 'processing-status', 'Preparing the relevant details…'));setDialog({icon:'thinking',message:'I’m putting the useful catalogue details together for you.'});
   let cards;
   try { cards = (await api(`/api/intake/${job.id}/cards`)).cards || []; } catch (e) { flowError(screen.body, e); return; }
   if (screen.epoch !== flowEpoch) return;
-  flow.job = job; flow.cards = cards;
+  flow.job = job; flow.cards = cards;setDialog({icon:'ready',message:'Please check the version. You can choose another suggestion or paste a catalogue URL.'});
   const rank={confident:0,partial:1,ambiguous:2,rejected:3};
  const available = (job.result.matches || []).map((m, index) => ({ ...m, index })).sort((a,b)=>(rank[a.confidence]??2)-(rank[b.confidence]??2));
   const parts = available.length > 1 && available.every(m => m.role === 'component');
@@ -243,7 +248,7 @@ async function ownershipNote(job, host, epoch) {
 function saveStep(job) {
   const screen = flowScreen(3, job.item_id ? 'Save these details?' : 'Add this to your collection?', job.item_id ? 'Your personal notes and photos stay with the item. The selected catalogue records will be linked to it.' : 'Your photo and the selected catalogue match will be kept together.');
   const title = el('input'); const chosen=flow.cards[flow.selected[0]];
- const suggested=/amiibo/i.test(job.category)&&chosen?`${chosen.title}${chosen.subtitle?' — '+chosen.subtitle:''} amiibo`:job.result.title||chosen?.title||'';
+ const suggested=chosen && flow.selected.length===1 && job.result.matches[flow.selected[0]].role!=='component' ? [chosen.title,chosen.subtitle].filter(Boolean).join(' — ') : job.result.title||chosen?.title||'';
  title.value = flow.customTitle ?? suggested;title.oninput=()=>flow.customTitle=title.value; title.setAttribute('aria-label', 'Item name');
   const layout = el('div', 'match-layout'), detail = el('section', 'identity-card');
   if (job.item_id) detail.append(el('h3', '', job.input.text.split('\n')[0] || job.result.title)); else detail.append(labeled('Name in your collection', title));
@@ -258,7 +263,7 @@ function saveStep(job) {
   }
   if (!job.item_id) {
     const personal = el('details', 'personal-notes'); personal.append(el('summary', '', 'Add your own details (optional)'));
-    personalEditor = fieldSetEditor(flow.personalAttributes || {}, [], ['title']);
+    personalEditor = fieldSetEditor({...(job.input?.default_values || flow.profile?.default_values),...flow.personalAttributes}, [...new Set([...(job.input?.field_keys || (flow.profile?.attributes||[]).map(f=>f.key)),...(job.input?.default_tags||flow.profile?.default_tags||[]).flatMap(tag=>graphVocabulary.tag_fields[tag]||[])])], ['title']);
     personal.append(el('p', 'muted', 'Location, condition and notes describe your own item. Catalogue facts stay linked to their source.'), personalEditor.root); screen.body.append(personal);
   }
   const status = el('p', 'flow-status'); status.setAttribute('role', 'status'); screen.body.append(status);
@@ -269,7 +274,7 @@ function saveStep(job) {
       // This click explicitly confirms the concrete selection shown on this step.
       const pending = (await api('/api/proposals?limit=100')).proposals || [];
       for (const p of pending.filter(p => p.type === 'identification_link' && p.proposed_payload.job_id === job.id)) await api(`/api/proposals/${p.id}/decision`, { method: 'POST', body: JSON.stringify({ approve: false, reason: 'Superseded by the reviewed selection.' }) });
-      const payload = { replace_existing: !!replaceMatch?.checked, confirm_alternative:flow.selected.some(index=>job.result.matches[index].confidence==='rejected'), selected: flow.selected, title: title.value, tags: [job.category || 'Other'], attributes: { ...(flow.personalAttributes || {}), ...(title.value ? { title: title.value } : {}) } };
+      const payload = { replace_existing: !!replaceMatch?.checked, confirm_alternative:flow.selected.some(index=>job.result.matches[index].confidence==='rejected'), selected: flow.selected, title: title.value, tags: job.input?.default_tags || flow.profile?.default_tags || [job.category || 'Other'], attributes: { ...(flow.personalAttributes || {}), ...(title.value ? { title: title.value } : {}) } };
       const proposal = await api(`/api/intake/${job.id}/proposal`, { method: 'POST', body: JSON.stringify(payload) });
       await api(`/api/proposals/${proposal.id}/decision`, { method: 'POST', body: JSON.stringify({ approve: true }) });
       await loadLibraryMeta(); const saved = await api(`/api/intake/${job.id}?compact=1`); flow.savedTitle=job.item_id?job.input.text.split('\n')[0]:title.value; savedStep(saved);
@@ -281,7 +286,7 @@ function savedStep(job) {
   const screen = flowScreen(3, 'Saved to your collection', 'Your item is saved. View it, or photograph the next one.');
   const name=el('h3','',flow.savedTitle||'Your item');screen.body.append(jobPhoto(job),name);
  api(`/api/items/${job.item_id}`).then(data=>{if(name.isConnected)name.textContent=(data.item||data).title||'Your item'}).catch(()=>{});
-  screen.actions.append(button('View item', async () => { const item = await api(`/api/items/${job.item_id}`); setWorkspace('collection'); openItemDetail(item.item || item, {}); }), button(`Add another ${job.category === 'Amiibo' ? 'Amiibo' : 'item'}`, () => showCapture(job.category), ''));
+  screen.actions.append(button('View item', async () => { const item = await api(`/api/items/${job.item_id}`); setWorkspace('collection'); openItemDetail(item.item || item, {}); }), button('Add another', () => showCapture(job.category), ''));
 }
 async function jobAction(job, action) { try { await api(`/api/intake/${job.id}/action`, { method: 'POST', body: JSON.stringify({ action }) }); if (action === 'retry') openIdentification(job.id); else showIntake(); } catch (e) { renderError(e); } }
 function searchStep(job) {
@@ -289,8 +294,9 @@ function searchStep(job) {
   const form = el('form', 'match-search'), provider = el('select'), query = el('input'); provider.setAttribute('aria-label', 'Catalogue'); query.setAttribute('aria-label', 'Character or title'); query.placeholder = 'For example, Mario or Link';
   const names = [['amiibo', 'Amiibo catalogue'], ['musicbrainz', 'Music releases'], ['wikidata', 'Films, games and more']];
   names.forEach(([value, label]) => { const option = el('option', '', label); option.value = value; provider.append(option); });
-  provider.value = /amiibo/i.test(job.category) ? 'amiibo' : /vinyl|music|record/i.test(job.category) ? 'musicbrainz' : 'wikidata';
+  provider.value = job.input?.policy?.providers?.[0] || flow.profile?.intake_config?.providers?.[0] || names[0][0];
   const submit = el('button', '', 'Search'); submit.type = 'submit'; form.append(provider, query, submit); const results = el('div', 'search-options'); screen.body.append(form, results);
+  const pasted=el('form','manual-url-form'), url=field('', 'url');url.placeholder='Paste a catalogue URL';url.required=true;const resolve=el('button','secondary','Use catalogue URL');resolve.type='submit';pasted.append(labeled('Already found the record?',url),resolve);screen.body.append(pasted);pasted.onsubmit=async e=>{e.preventDefault();resolve.disabled=true;results.textContent='Remy is checking that catalogue record…';try{await api(`/api/intake/${job.id}/resolve`,{method:'POST',body:JSON.stringify({url:url.value})});openIdentification(job.id);}catch(error){flowError(results,error);}finally{resolve.disabled=false;}};
   form.onsubmit = async event => {
     event.preventDefault(); submit.disabled = true; results.replaceChildren(el('p', 'muted', 'Searching…'));
     try { const data = await api(`/api/authorities/search?provider=${provider.value}&q=${encodeURIComponent(query.value)}`); if (screen.epoch !== flowEpoch) return; results.replaceChildren(); for (const c of (data.candidates || []).slice(0, 8)) { const choice = button('', async () => { results.replaceChildren(el('p', 'muted', 'Checking that record…')); try { await api(`/api/intake/${job.id}/resolve`, { method: 'POST', body: JSON.stringify({ provider: c.provider, kind: c.kind, id: c.id }) }); openIdentification(job.id); } catch (e) { flowError(results, e); } }, 'search-option'); choice.append(el('strong', '', c.label), el('small', '', c.description)); results.append(choice); } if (!data.candidates?.length) results.append(el('p', '', 'No matches. Try just the character or title, without the year or format.')); }
@@ -308,33 +314,6 @@ async function researchItem(item) {
   try { const data = await api('/api/intake/enrich', { method: 'POST', body: JSON.stringify({ item_id: item.id }) }); openIdentification(data.jobs[0].id); }
   catch (e) { flowError(screen.body, e); }
 }
-// Inventory detail prioritises curated identity. Personal editing stays available.
-itemDetail = function(data) {
-  const item = data.item || {}, card = el('article', 'curated-item');
-  card.append(el('h2', '', item.title || 'Your item'));
-  const layout = el('div', 'match-layout'), photo = el('div', 'flow-picture'), information = el('div');
-  if (item.images?.length) { const p = item.images.find(p => p.is_primary) || item.images[0], image = el('img'); image.src = p.original_url || `/api/images/${p.id}/original`; image.alt = item.title; image.onclick = () => showItemImage(item.title, image.src); photo.append(image); }
-  const tools = el('div', 'item-detail-tools'); tools.append(button('← Collection', () => showLibrary(), 'plain-button'), button('Edit my details', () => openCatalog(item), 'secondary'), button('Correct catalogue match', () => researchItem(item), 'plain-button')); card.append(tools);
-  layout.append(photo, information); card.append(layout); information.append(el('p', 'muted', 'Loading the linked identity…'));
-  api(`/api/items/${item.id}/cards`).then(data => {
-    information.replaceChildren(); const cards = data.cards || [];
-    if (!cards.length) information.append(el('p', '', 'Link this item to a catalogue record to fill in its details.'), button('Find a match', () => researchItem(item), ''));
-    else if (cards.length === 1) information.append(factCard(cards[0]));
-    else { information.append(el('h3', '', 'In this collection')); for (const c of cards) information.append(button(c.title + (c.facts.find(f => f.label === 'Original release')?.value ? ` · ${c.facts.find(f => f.label === 'Original release').value.slice(0,4)}` : ''), () => openCanonical(c.entity_id), 'contained-link')); }
-    const own = el('section', 'own-copy');
-    const fields = item.attributes || {}, facts = [];
-    const format = fields.format || (item.tags || []).filter(t => /^(dvd|blu.?ray|uhd|uhd blu.?ray|vhs|cd|cassette|lp|4k)$/i.test(t)).join(' · ');
-    if (format) facts.push(['Format', format]);
-    for (const key of (cards.length ? ['condition', 'location'] : ['artist_name', 'release_year', 'year', 'condition', 'location'])) {
-      if (fields[key] !== undefined && fields[key] !== '' && facts.length < 4) facts.push([graphVocabulary.fields?.find(f => f.key === key)?.label || prettyKey(key), fields[key]]);
-    }
-    if (facts.length) { const dl = el('dl', 'identity-facts'); for (const [label, value] of facts) dl.append(el('dt', '', label), el('dd', '', String(value))); own.append(el('h4', '', 'Your copy'), dl); information.append(own); }
-    const notes = el('details', 'personal-notes'); notes.append(el('summary', '', 'Your notes and organization'));
-    const dl = el('dl', 'identity-facts'); for (const [key, value] of Object.entries(item.attributes || {})) if (key !== 'title') appendAttributeDetail(dl, key, value); notes.append(dl, el('p', 'muted', (item.tags || []).join(' · '))); information.append(notes);
-
-  }).catch(e => flowError(information, e));
-  return card;
-};
 async function openCanonical(id) {
   try { const data = await api(`/api/canonical/${id}/card`); setWorkspace('collection'); stage.replaceChildren(factCard(data.card)); const owners = el('div', 'actions'); for (const item of data.owners || []) owners.append(button(`View ${item.title}`, () => openItemDetail(item, {}))); stage.append(owners); }
   catch (e) { renderError(e); }

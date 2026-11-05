@@ -130,6 +130,7 @@ func New(version string, repo *store.Store, remyService *remy.Service, intakeSer
 			mcp.WithString("name", mcp.Description("Proposed category name.")),
 			mcp.WithString("description", mcp.Description("Optional template description.")),
 			mcp.WithArray("default_tags", mcp.Description("Tags copied when creating an item from this template.")),
+			mcp.WithObject("intake_config", mcp.Description("Runtime type policy: providers (approved adapter names), prompt, display_fields (provider to up to four source field paths).")),
 			mcp.WithObject("default_values", mcp.Description("Initial values for registered fields.")),
 			mcp.WithArray("attributes", mcp.Description("Attribute objects with key, label, data_type (text, number, boolean, date, or enum), required, display_order, and config. Enum config must contain an options array.")),
 		),
@@ -149,7 +150,14 @@ func New(version string, repo *store.Store, remyService *remy.Service, intakeSer
 			if string(defaults) == "null" {
 				defaults = nil
 			}
-			proposal, err := remyService.ProposeCategoryChange(ctx, store.CategoryProposalPayload{DefaultTags: defaultTags, DefaultValues: defaults,
+			var policy *store.IntakeConfig
+			if raw, ok := request.GetArguments()["intake_config"]; ok {
+				b, _ := json.Marshal(raw)
+				if err := json.Unmarshal(b, &policy); err != nil {
+					return mcp.NewToolResultError(err.Error()), nil
+				}
+			}
+			proposal, err := remyService.ProposeCategoryChange(ctx, store.CategoryProposalPayload{IntakeConfig: policy, DefaultTags: defaultTags, DefaultValues: defaults,
 				Operation:   request.GetString("operation", "create"),
 				CategoryID:  request.GetString("category_id", ""),
 				Name:        request.GetString("name", ""),
