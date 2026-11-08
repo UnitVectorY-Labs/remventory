@@ -248,7 +248,11 @@ async function ownershipNote(job, host, epoch) {
 function saveStep(job) {
   const screen = flowScreen(3, job.item_id ? 'Save these details?' : 'Add this to your collection?', job.item_id ? 'Your personal notes and photos stay with the item. The selected catalogue records will be linked to it.' : 'Your photo and the selected catalogue match will be kept together.');
   const title = el('input'); const chosen=flow.cards[flow.selected[0]];
- const suggested=chosen && flow.selected.length===1 && job.result.matches[flow.selected[0]].role!=='component' ? [chosen.title,chosen.subtitle].filter(Boolean).join(' — ') : job.result.title||chosen?.title||'';
+ const keys = job.input?.field_keys || (flow.profile?.attributes || []).map(f => f.key);
+ const inferredTitle = job.result?.inferred?.title;
+ const normalizeTitle = value => String(value || '').normalize('NFKD').toLowerCase().replace(/[^\p{L}\p{N}]+/gu, ' ').trim();
+ const sameWork = chosen && inferredTitle && (` ${normalizeTitle(inferredTitle)} `).includes(` ${normalizeTitle(chosen.title)} `);
+ const suggested=chosen && flow.selected.length===1 && job.result.matches[flow.selected[0]].role!=='component' ? (keys.includes('console') && sameWork ? inferredTitle : [chosen.title,chosen.subtitle].filter(Boolean).join(' — ')) : job.result.title||chosen?.title||'';
  title.value = flow.customTitle ?? suggested;title.oninput=()=>flow.customTitle=title.value; title.setAttribute('aria-label', 'Item name');
   const layout = el('div', 'match-layout'), detail = el('section', 'identity-card');
   if (job.item_id) detail.append(el('h3', '', job.input.text.split('\n')[0] || job.result.title)); else detail.append(labeled('Name in your collection', title));
@@ -278,13 +282,20 @@ function saveStep(job) {
       // This click explicitly confirms the concrete selection shown on this step.
       const pending = (await api('/api/proposals?limit=100')).proposals || [];
       for (const p of pending.filter(p => p.type === 'identification_link' && p.proposed_payload.job_id === job.id)) await api(`/api/proposals/${p.id}/decision`, { method: 'POST', body: JSON.stringify({ approve: false, reason: 'Superseded by the reviewed selection.' }) });
-      const payload = { replace_existing: !!replaceMatch?.checked, confirm_alternative:flow.selected.some(index=>job.result.matches[index].confidence==='rejected'), selected: flow.selected, title: title.value, tags: job.input?.default_tags || flow.profile?.default_tags || [job.category || 'Other'], attributes: { ...(flow.personalAttributes || {}), ...(title.value ? { title: title.value } : {}) } };
+      const payload = { replace_existing: !!replaceMatch?.checked, confirm_alternative:flow.selected.some(index=>job.result.matches[index].confidence==='rejected'), selected: flow.selected, title: title.value, tags: intakeTags(job, consoleReview?.value()), attributes: { ...(flow.personalAttributes || {}), ...(title.value ? { title: title.value } : {}) } };
       const proposal = await api(`/api/intake/${job.id}/proposal`, { method: 'POST', body: JSON.stringify(payload) });
       await api(`/api/proposals/${proposal.id}/decision`, { method: 'POST', body: JSON.stringify({ approve: true }) });
       await loadLibraryMeta(); const saved = await api(`/api/intake/${job.id}?compact=1`); flow.savedTitle=job.item_id?job.input.text.split('\n')[0]:title.value; savedStep(saved);
     } catch (e) { try {const current=await api(`/api/intake/${job.id}?compact=1`);if(current.state==='approved'){savedStep(current);return}}catch(_){} flowError(status, e); save.disabled = false; }
   }, '');
   screen.actions.append(button('← Back to match', () => { if (personalEditor) flow.personalAttributes = personalEditor.read(); if (consoleReview) flow.personalAttributes = {...flow.personalAttributes, [consoleReview.key]:consoleReview.value()}; matchStep(job); }), save);
+}
+function intakeTags(job, console) {
+  const tags = job.input?.default_tags || flow.profile?.default_tags || [job.category || 'Other'];
+  const seen = new Set();
+  return [...tags.filter(tag => !console || tag.trim().toLowerCase() !== 'consoles'), ...(console ? [console] : [])].map(tag => tag.trim()).filter(tag => {
+    const key = tag.toLowerCase(); if (!tag || seen.has(key)) return false; seen.add(key); return true;
+  });
 }
 // The owned console is a human decision, independent of a work's platform list.
 function consoleConfirmation(job) {
@@ -300,11 +311,12 @@ function consoleConfirmation(job) {
   const inferred = job.result?.inferred?.console;
   input.value = flow.personalAttributes?.[key] || job.input?.default_values?.[key] || '';
   const confirmed = el('input'); confirmed.type = 'checkbox';
-  const status = el('p', 'flow-status'), expansion = el('div');
+  const status = el('p', 'flow-status'), expansion = el('div'), tagPreview = el('p', 'muted');
   let proposalID = null, proposedValue = '', busy = false;
   const allowed = () => definition.data_type !== 'enum' || options().includes(input.value.trim());
   function refresh() {
     confirmed.checked = false; expansion.replaceChildren();
+    tagPreview.textContent = `Tags when saved: ${intakeTags(job, input.value.trim()).join(', ')}`;
     if (definition.data_type !== 'enum' || !input.value.trim() || allowed()) return;
     const value = input.value.trim();
     expansion.append(el('p', '', `Add “${value}” to the shared Console choices? Existing choices will be kept.`));
@@ -326,7 +338,7 @@ function consoleConfirmation(job) {
   input.oninput = () => { flow.personalAttributes = {...flow.personalAttributes, [key]:input.value.trim()}; refresh(); };
   root.append(el('h3', '', 'Confirm the console'), el('p', 'muted', 'Read the console on your case or cartridge. A catalogue game can list several platforms; that does not identify your copy.'));
   if (inferred) root.append(el('p', 'muted', `Remy’s suggestion: ${inferred}. Please check it against the photo.`));
-  root.append(labeled('Console', input), choices, expansion, labeled('I checked this console against my game', confirmed), status); refresh();
+  root.append(labeled('Console', input), choices, expansion, tagPreview, labeled('I checked this console against my game', confirmed), status); refresh();
   return {root, key, value:() => input.value.trim(), valid:() => !!input.value.trim() && allowed() && confirmed.checked && !busy};
 }
 function savedStep(job) {

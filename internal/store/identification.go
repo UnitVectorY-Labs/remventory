@@ -305,7 +305,7 @@ func (s *Store) ProposeIdentification(ctx context.Context, p IdentificationPropo
 			return Proposal{}, err
 		}
 		p.Attributes = prepared.Attributes
-		p.Tags = prepared.Tags
+		p.Tags = identificationTags(j, prepared.Tags, prepared.Attributes)
 		p.Title = prepared.Title
 	}
 	return s.createProposal(ctx, DefaultUserID, "identification_link", p)
@@ -460,4 +460,36 @@ func validateIdentificationConsole(j IdentificationJob, attributes json.RawMessa
 		}
 	}
 	return nil
+}
+
+// Old intake jobs retain their original template tags. Correct those defaults
+// when the owner confirms a console, without changing the pending job itself.
+func identificationTags(j IdentificationJob, tags []string, attributes json.RawMessage) []string {
+	hasConsole := false
+	for _, key := range j.Input.FieldKeys {
+		if key == "console" {
+			hasConsole = true
+		}
+	}
+	var values map[string]any
+	_ = json.Unmarshal(attributes, &values)
+	console, _ := values["console"].(string)
+	console = strings.TrimSpace(console)
+	result := []string{}
+	seen := map[string]bool{}
+	for _, tag := range tags {
+		tag = strings.TrimSpace(tag)
+		if tag == "" || (hasConsole && console != "" && strings.EqualFold(tag, "Consoles")) {
+			continue
+		}
+		key := strings.ToLower(tag)
+		if !seen[key] {
+			result = append(result, tag)
+			seen[key] = true
+		}
+	}
+	if hasConsole && console != "" && !seen[strings.ToLower(console)] {
+		result = append(result, console)
+	}
+	return result
 }

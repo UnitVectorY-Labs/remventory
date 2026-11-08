@@ -14,7 +14,10 @@ physical copy. Nintendo Switch and Nintendo Switch 2 are separate choices.
 If a console is missing from your shared choices, type its name and use
 **Approve new console choice** before confirming your copy. This approves a
 vocabulary proposal; **Add to my inventory** separately confirms the item.
-Existing pending scans can use the same review without taking photos again.
+The confirmed console is also added as a tag; duplicate tags and the generic
+Consoles default are removed for this intake. Existing pending scans can use the
+same review without taking photos again. Visible edition wording is retained in
+the suggested name when it matches the selected game.
 
 Remy looks up specific figure variants in AmiiboAPI. A Mario character match
 alone is insufficient: the Super Smash Bros. figure and Super Mario Bros. figure

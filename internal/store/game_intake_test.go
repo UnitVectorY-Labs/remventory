@@ -88,3 +88,60 @@ func TestBlankCachedTitleNeedsRefresh(t *testing.T) {
 		t.Fatalf("repaired title not fresh: %v, %v", fresh, err)
 	}
 }
+
+func TestConfirmedGameTagsRepairLegacyDefaults(t *testing.T) {
+	job := IdentificationJob{Input: IdentificationInput{FieldKeys: []string{"console"}}}
+	got := identificationTags(job, []string{"Games", "Consoles", " Games ", "consoles", "PS3", "ps3", "Favorites"}, json.RawMessage(`{"console":"PS3"}`))
+	if strings.Join(got, ",") != "Games,PS3,Favorites" {
+		t.Fatalf("tags: %v", got)
+	}
+	got = identificationTags(job, []string{"Games", "Consoles", "Games"}, json.RawMessage(`{"console":"Nintendo Switch 2"}`))
+	if strings.Join(got, ",") != "Games,Nintendo Switch 2" {
+		t.Fatalf("tags: %v", got)
+	}
+	got = identificationTags(IdentificationJob{}, []string{"Consoles", "Hardware"}, json.RawMessage(`{}`))
+	if strings.Join(got, ",") != "Consoles,Hardware" {
+		t.Fatalf("unrelated tags changed: %v", got)
+	}
+}
+
+func TestLegacyPendingGameGetsConsoleTagOnlyOnApproval(t *testing.T) {
+	s := canonicalTestStore(t)
+	ctx := context.Background()
+	p, err := s.CreateGraphProposal(ctx, GraphProposalPayload{Operation: "define_field", Key: "console", Label: "Console", DataType: "enum", Config: json.RawMessage(`{"options":["PS3"]}`)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = s.DecideProposal(ctx, p.ID, ProposalDecision{Approve: true}); err != nil {
+		t.Fatal(err)
+	}
+	job, err := s.CreateIdentification(ctx, "Video Game", "", IdentificationInput{Policy: &IntakeConfig{Providers: []string{"wikidata"}}, FieldKeys: []string{"title", "console"}, DefaultTags: []string{"Games", "Consoles"}, DefaultValues: json.RawMessage(`{}`)}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = s.pool.Exec(ctx, `update identification_jobs set state='review' where id=$1`, job.ID); err != nil {
+		t.Fatal(err)
+	}
+	p, err = s.ProposeIdentification(ctx, IdentificationProposal{JobID: job.ID, Title: "Skyrim — Legendary Edition", Tags: []string{"Games", "Consoles"}, Attributes: json.RawMessage(`{"title":"Skyrim — Legendary Edition","console":"PS3"}`)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	before, err := s.Identification(ctx, job.ID)
+	if err != nil || before.State != "review" || before.ItemID != "" {
+		t.Fatalf("proposal changed pending state: %v, %v", before, err)
+	}
+	if _, err = s.DecideProposal(ctx, p.ID, ProposalDecision{Approve: true}); err != nil {
+		t.Fatal(err)
+	}
+	after, err := s.Identification(ctx, job.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	item, err := s.GetItem(ctx, after.ItemID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Join(item.Tags, ",") != "Games,PS3" || item.Title != "Skyrim — Legendary Edition" {
+		t.Fatalf("saved game: %+v", item)
+	}
+}
