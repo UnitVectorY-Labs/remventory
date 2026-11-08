@@ -193,7 +193,7 @@ async function matchStep(job) {
   let cards;
   try { cards = (await api(`/api/intake/${job.id}/cards`)).cards || []; } catch (e) { flowError(screen.body, e); return; }
   if (screen.epoch !== flowEpoch) return;
-  flow.job = job; flow.cards = cards;setDialog({icon:'ready',message:'Please check the version. You can choose another suggestion or paste a catalogue URL.'});
+  flow.job = job; flow.cards = cards.map((card, index) => ({...card, title: card.title || job.result.matches[index]?.candidate.label || job.result.title || 'Unidentified item'})); cards = flow.cards;setDialog({icon:'ready',message:'Please check the version. You can choose another suggestion or paste a catalogue URL.'});
   const rank={confident:0,partial:1,ambiguous:2,rejected:3};
  const available = (job.result.matches || []).map((m, index) => ({ ...m, index })).sort((a,b)=>(rank[a.confidence]??2)-(rank[b.confidence]??2));
   const parts = available.length > 1 && available.every(m => m.role === 'component');
@@ -256,6 +256,8 @@ function saveStep(job) {
   for (const index of flow.selected) { const c = flow.cards[index]; if (!c) continue; detail.append(factCard(c, true)); }
   layout.append(jobPhoto(job), detail); screen.body.append(layout);
   let personalEditor, replaceMatch;
+  const consoleReview = !job.item_id ? consoleConfirmation(job) : null;
+  if (consoleReview) screen.body.append(consoleReview.root);
   if (job.item_id) {
     replaceMatch = el('input'); replaceMatch.type = 'checkbox';
     const replace = labeled('Replace previously linked catalogue matches with this selection', replaceMatch);
@@ -263,14 +265,16 @@ function saveStep(job) {
   }
   if (!job.item_id) {
     const personal = el('details', 'personal-notes'); personal.append(el('summary', '', 'Add your own details (optional)'));
-    personalEditor = fieldSetEditor({...(job.input?.default_values || flow.profile?.default_values),...flow.personalAttributes}, [...new Set([...(job.input?.field_keys || (flow.profile?.attributes||[]).map(f=>f.key)),...(job.input?.default_tags||flow.profile?.default_tags||[]).flatMap(tag=>graphVocabulary.tag_fields[tag]||[])])], ['title']);
+    personalEditor = fieldSetEditor({...(job.input?.default_values || flow.profile?.default_values),...flow.personalAttributes}, [...new Set([...(job.input?.field_keys || (flow.profile?.attributes||[]).map(f=>f.key)),...(job.input?.default_tags||flow.profile?.default_tags||[]).flatMap(tag=>graphVocabulary.tag_fields[tag]||[])])], consoleReview ? ['title', consoleReview.key] : ['title']);
     personal.append(el('p', 'muted', 'Location, condition and notes describe your own item. Catalogue facts stay linked to their source.'), personalEditor.root); screen.body.append(personal);
   }
   const status = el('p', 'flow-status'); status.setAttribute('role', 'status'); screen.body.append(status);
   const save = button(job.item_id ? 'Save match' : 'Add to my inventory', async () => {
     save.disabled = true; status.textContent = 'Saving…';
     try {
+      if (consoleReview && !consoleReview.valid()) throw Error('Choose and confirm the console shown on your game packaging. Approve any new console choice first.');
       if (personalEditor) flow.personalAttributes = personalEditor.read();
+      if (consoleReview) flow.personalAttributes = {...flow.personalAttributes, [consoleReview.key]: consoleReview.value()};
       // This click explicitly confirms the concrete selection shown on this step.
       const pending = (await api('/api/proposals?limit=100')).proposals || [];
       for (const p of pending.filter(p => p.type === 'identification_link' && p.proposed_payload.job_id === job.id)) await api(`/api/proposals/${p.id}/decision`, { method: 'POST', body: JSON.stringify({ approve: false, reason: 'Superseded by the reviewed selection.' }) });
@@ -280,7 +284,50 @@ function saveStep(job) {
       await loadLibraryMeta(); const saved = await api(`/api/intake/${job.id}?compact=1`); flow.savedTitle=job.item_id?job.input.text.split('\n')[0]:title.value; savedStep(saved);
     } catch (e) { try {const current=await api(`/api/intake/${job.id}?compact=1`);if(current.state==='approved'){savedStep(current);return}}catch(_){} flowError(status, e); save.disabled = false; }
   }, '');
-  screen.actions.append(button('← Back to match', () => { if (personalEditor) flow.personalAttributes = personalEditor.read(); matchStep(job); }), save);
+  screen.actions.append(button('← Back to match', () => { if (personalEditor) flow.personalAttributes = personalEditor.read(); if (consoleReview) flow.personalAttributes = {...flow.personalAttributes, [consoleReview.key]:consoleReview.value()}; matchStep(job); }), save);
+}
+// The owned console is a human decision, independent of a work's platform list.
+function consoleConfirmation(job) {
+  const keys = job.input?.field_keys || (flow.profile?.attributes || []).map(f => f.key);
+  const key = keys.includes('console') ? 'console' : null;
+  const definition = graphVocabulary.fields.find(f => f.key === key);
+  if (!definition) return null;
+  const root = el('section', 'identity-card'), input = el('input'), choices = el('datalist');
+  choices.id = 'console-choices'; input.setAttribute('list', choices.id); input.setAttribute('aria-label', 'Console');
+  const options = () => definition.config?.options || [];
+  for (const value of [...new Set([...options(), 'Nintendo Switch', 'Nintendo Switch 2'])]) choices.append(new Option(value, value));
+  // Keep suggestions visible but never select or confirm a console from catalogue metadata.
+  const inferred = job.result?.inferred?.console;
+  input.value = flow.personalAttributes?.[key] || job.input?.default_values?.[key] || '';
+  const confirmed = el('input'); confirmed.type = 'checkbox';
+  const status = el('p', 'flow-status'), expansion = el('div');
+  let proposalID = null, proposedValue = '', busy = false;
+  const allowed = () => definition.data_type !== 'enum' || options().includes(input.value.trim());
+  function refresh() {
+    confirmed.checked = false; expansion.replaceChildren();
+    if (definition.data_type !== 'enum' || !input.value.trim() || allowed()) return;
+    const value = input.value.trim();
+    expansion.append(el('p', '', `Add “${value}” to the shared Console choices? Existing choices will be kept.`));
+    const approve = button('Approve new console choice', async () => {
+      if (busy) return; busy = true; approve.disabled = true; input.disabled = true;
+      try {
+        if (!proposalID || proposedValue !== value) {
+          const proposal = await api('/api/proposals/graph', {method:'POST', body:JSON.stringify({operation:'extend_enum', key, config:{options:[value]}})});
+          proposalID = proposal.id; proposedValue = value;
+        }
+        await api(`/api/proposals/${proposalID}/decision`, {method:'POST', body:JSON.stringify({approve:true})});
+        await loadLibraryMeta(); definition.config = graphVocabulary.fields.find(f => f.key === key).config;
+        refresh(); status.textContent = 'Console choice added. Check the packaging and confirm below.';
+      } catch(e) { flowError(status,e); }
+      finally { busy = false; approve.disabled = false; input.disabled = false; }
+    }, 'secondary');
+    expansion.append(approve);
+  }
+  input.oninput = () => { flow.personalAttributes = {...flow.personalAttributes, [key]:input.value.trim()}; refresh(); };
+  root.append(el('h3', '', 'Confirm the console'), el('p', 'muted', 'Read the console on your case or cartridge. A catalogue game can list several platforms; that does not identify your copy.'));
+  if (inferred) root.append(el('p', 'muted', `Remy’s suggestion: ${inferred}. Please check it against the photo.`));
+  root.append(labeled('Console', input), choices, expansion, labeled('I checked this console against my game', confirmed), status); refresh();
+  return {root, key, value:() => input.value.trim(), valid:() => !!input.value.trim() && allowed() && confirmed.checked && !busy};
 }
 function savedStep(job) {
   const screen = flowScreen(3, 'Saved to your collection', 'Your item is saved. View it, or photograph the next one.');

@@ -301,6 +301,9 @@ func (s *Store) ProposeIdentification(ctx context.Context, p IdentificationPropo
 		if err != nil {
 			return Proposal{}, err
 		}
+		if err := validateIdentificationConsole(j, prepared.Attributes); err != nil {
+			return Proposal{}, err
+		}
 		p.Attributes = prepared.Attributes
 		p.Tags = prepared.Tags
 		p.Title = prepared.Title
@@ -343,6 +346,9 @@ func applyIdentification(ctx context.Context, tx pgx.Tx, proposal *Proposal) err
 	if itemID == "" {
 		fields, err := readFields(ctx, tx)
 		if err != nil {
+			return err
+		}
+		if err = validateIdentificationConsole(j, p.Attributes); err != nil {
 			return err
 		}
 		if err = validateItemAttributeValues(p.Attributes, fieldAttributes(fields)); err != nil {
@@ -432,4 +438,26 @@ func (s *Store) QueueEnrichment(ctx context.Context, tag string, limit int) ([]I
 		out = append(out, j)
 	}
 	return out, nil
+}
+
+// Templates with a Console field require an owned-copy console during intake.
+// The selected catalogue work may list many platforms or omit platform claims.
+func validateIdentificationConsole(j IdentificationJob, attributes json.RawMessage) error {
+	if j.ItemID != "" {
+		return nil
+	}
+	for _, key := range j.Input.FieldKeys {
+		if key != "console" {
+			continue
+		}
+		var values map[string]any
+		if err := json.Unmarshal(attributes, &values); err != nil {
+			return err
+		}
+		console, _ := values[key].(string)
+		if strings.TrimSpace(console) == "" {
+			return fmt.Errorf("confirm the console on the game packaging before saving")
+		}
+	}
+	return nil
 }

@@ -30,6 +30,9 @@ func (a api) identificationCards(w http.ResponseWriter, r *http.Request) {
 			writeError(w, 500, e.Error())
 			return
 		}
+		if c.Title == "" {
+			c.Title = m.Candidate.Label
+		}
 		cards = append(cards, c)
 	}
 	writeJSON(w, 200, map[string]any{"cards": cards})
@@ -62,6 +65,9 @@ func (a api) itemCards(w http.ResponseWriter, r *http.Request) {
 		if e != nil {
 			writeError(w, 500, e.Error())
 			return
+		}
+		if c.Title == "" {
+			c.Title = item.Title
 		}
 		cards = append(cards, c)
 		if len(cards) >= 8 {

@@ -82,6 +82,12 @@ func fieldAttributes(fields []FieldDefinition) []Attribute {
 }
 func validateGraphPayload(p *GraphProposalPayload) error {
 	switch p.Operation {
+	case "extend_enum":
+		if !regexp.MustCompile(`^[a-z][a-z0-9_]{0,63}$`).MatchString(p.Key) {
+			return errors.New("invalid field key")
+		}
+		candidate := CategoryProposalPayload{Operation: "create", Name: "validation", Attributes: []AttributeDraft{{Key: p.Key, Label: p.Key, DataType: "enum", Config: p.Config}}}
+		return validateCategoryProposalPayload(&candidate)
 	case "define_field":
 		p.Key = strings.TrimSpace(p.Key)
 		p.Label = strings.TrimSpace(p.Label)
@@ -109,7 +115,7 @@ func validateGraphPayload(p *GraphProposalPayload) error {
 			return errors.New("provide one tag, up to 80 characters, without commas")
 		}
 	default:
-		return errors.New("graph operation must be define_field or suggest_fields")
+		return errors.New("graph operation must be define_field, extend_enum or suggest_fields")
 	}
 	return nil
 }
@@ -132,6 +138,15 @@ func (s *Store) CreateGraphProposal(ctx context.Context, p GraphProposalPayload)
 			}
 		}
 	}
+	if p.Operation == "extend_enum" {
+		var kind string
+		if err := s.pool.QueryRow(ctx, `select data_type from field_definitions where key=$1`, p.Key).Scan(&kind); err != nil {
+			return Proposal{}, err
+		}
+		if kind != "enum" {
+			return Proposal{}, errors.New("only enum fields support additional choices")
+		}
+	}
 	if p.Operation == "define_field" {
 		var exists bool
 		if err := s.pool.QueryRow(ctx, `select exists(select 1 from field_definitions where key=$1)`, p.Key).Scan(&exists); err != nil {
@@ -145,6 +160,42 @@ func (s *Store) CreateGraphProposal(ctx context.Context, p GraphProposalPayload)
 }
 func applyGraphChange(ctx context.Context, tx pgx.Tx, p GraphProposalPayload) error {
 	if err := validateGraphPayload(&p); err != nil {
+		return err
+	}
+	if p.Operation == "extend_enum" {
+		var config json.RawMessage
+		if err := tx.QueryRow(ctx, `select config from field_definitions where key=$1 and data_type='enum' for update`, p.Key).Scan(&config); err != nil {
+			return err
+		}
+		var current map[string]any
+		if err := json.Unmarshal(config, &current); err != nil {
+			return err
+		}
+		var additions struct {
+			Options []string `json:"options"`
+		}
+		if err := json.Unmarshal(p.Config, &additions); err != nil {
+			return err
+		}
+		options, _ := current["options"].([]any)
+		seen := map[string]bool{}
+		for _, option := range options {
+			if v, ok := option.(string); ok {
+				seen[v] = true
+			}
+		}
+		for _, option := range additions.Options {
+			if !seen[option] {
+				options = append(options, option)
+				seen[option] = true
+			}
+		}
+		current["options"] = options
+		merged, err := json.Marshal(current)
+		if err != nil {
+			return err
+		}
+		_, err = tx.Exec(ctx, `update field_definitions set config=$2 where key=$1`, p.Key, merged)
 		return err
 	}
 	if p.Operation == "define_field" {

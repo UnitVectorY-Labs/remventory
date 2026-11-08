@@ -105,7 +105,8 @@ func (s *Store) CachedGraph(ctx context.Context, ref authority.Ref) (authority.G
 	if err != nil {
 		return authority.Graph{}, false, err
 	}
-	return doc.Graph, fresh, nil
+	// Refetch legacy cached entities whose labels were lost without language fallback.
+	return doc.Graph, fresh && strings.TrimSpace(authority.RootEntity(doc.Graph).Label) != "", nil
 }
 
 type EntityDocument struct {

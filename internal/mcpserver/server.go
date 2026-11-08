@@ -21,7 +21,7 @@ func New(version string, repo *store.Store, remyService *remy.Service, intakeSer
 		}
 		return mcp.NewToolResultStructuredOnly(vocabulary), nil
 	})
-	server.AddTool(mcp.NewTool("propose_graph_change", mcp.WithDescription("Propose an intentional vocabulary expansion or tag field suggestions. Requires explicit approval."), mcp.WithString("operation", mcp.Description("define_field or suggest_fields")), mcp.WithString("key"), mcp.WithString("label"), mcp.WithString("data_type", mcp.Description("text, number, boolean, date, links, enum")), mcp.WithObject("config"), mcp.WithString("tag"), mcp.WithArray("field_keys")), func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	server.AddTool(mcp.NewTool("propose_graph_change", mcp.WithDescription("Propose an intentional vocabulary expansion or tag field suggestions. Requires explicit approval."), mcp.WithString("operation", mcp.Description("define_field, extend_enum or suggest_fields")), mcp.WithString("key"), mcp.WithString("label"), mcp.WithString("data_type", mcp.Description("text, number, boolean, date, links, enum")), mcp.WithObject("config"), mcp.WithString("tag"), mcp.WithArray("field_keys")), func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		data, err := json.Marshal(request.GetArguments())
 		if err != nil {
 			return mcp.NewToolResultError(err.Error()), nil

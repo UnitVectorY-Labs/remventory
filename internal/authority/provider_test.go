@@ -146,3 +146,21 @@ func TestWikidataBatchesAnonymousEntityReads(t *testing.T) {
 		t.Fatalf("batch read failed: %d entities, %d calls, %v", len(got), calls, err)
 	}
 }
+
+func TestWikidataLanguageNeutralGameTitle(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Query().Get("languagefallback") != "1" || !strings.Contains(r.URL.Query().Get("languages"), "mul") {
+			t.Error("entity requests must enable language fallback")
+		}
+		w.Write([]byte(`{"entities":{"Q96417649":{"id":"Q96417649","labels":{"mul":{"value":"Among Us"}},"descriptions":{"en":{"value":"2018 video game"}}}}}`))
+	}))
+	defer srv.Close()
+	p := Wikidata{BaseURL: srv.URL, HTTP: NewClient()}
+	g, err := p.Resolve(context.Background(), Ref{"wikidata", "entity", "Q96417649"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := RenderCard(g, DisplayPlan{}, false).Title; got != "Among Us" {
+		t.Fatalf("title = %q", got)
+	}
+}

@@ -6,6 +6,16 @@ shows the current decision and its next action. For Nintendo Amiibo, choose
 choose **Find this item**. Photos and identification are durable after submission;
 **Pending items** lets you return later or photograph another object immediately.
 
+For video games, include the console banner and edition text in your photos.
+When the selected template includes the **Console** field, the Save screen asks
+you to choose and confirm the console against the case or cartridge. Remy's
+suggestion is a clue; a game's catalogue platform list does not identify your
+physical copy. Nintendo Switch and Nintendo Switch 2 are separate choices.
+If a console is missing from your shared choices, type its name and use
+**Approve new console choice** before confirming your copy. This approves a
+vocabulary proposal; **Add to my inventory** separately confirms the item.
+Existing pending scans can use the same review without taking photos again.
+
 Remy looks up specific figure variants in AmiiboAPI. A Mario character match
 alone is insufficient: the Super Smash Bros. figure and Super Mario Bros. figure
 have different identifiers. Where available, private catalogue reference images

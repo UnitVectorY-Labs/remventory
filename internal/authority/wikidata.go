@@ -94,7 +94,7 @@ func (p *Wikidata) fetch(ctx context.Context, ids []string) (map[string]wdEntity
 		Entities map[string]wdEntity `json:"entities"`
 		Error    any                 `json:"error"`
 	}
-	err := p.HTTP.Get(ctx, "wikidata", p.base()+"?action=wbgetentities&format=json&languages=en&props=labels|descriptions|claims&maxlag=5&ids="+url.QueryEscape(strings.Join(ids, "|")), &res)
+	err := p.HTTP.Get(ctx, "wikidata", p.base()+"?action=wbgetentities&format=json&languages=en%7Cmul&languagefallback=1&props=labels|descriptions|claims&maxlag=5&ids="+url.QueryEscape(strings.Join(ids, "|")), &res)
 	if err == nil && res.Error != nil {
 		err = fmt.Errorf("Wikidata unavailable: %v", res.Error)
 	}
@@ -221,7 +221,7 @@ func (p *Wikidata) Resolve(ctx context.Context, r Ref) (Graph, error) {
 			}
 		}
 		raw, _ := json.Marshal(e)
-		g.Entities = append(g.Entities, Entity{Ref: Ref{"wikidata", "entity", e.ID}, Label: e.Labels["en"].Value, Description: e.Descriptions["en"].Value, URI: "https://www.wikidata.org/wiki/" + e.ID, Fields: fields, Raw: raw, License: "CC0-1.0", RetrievedAt: time.Now().UTC()})
+		g.Entities = append(g.Entities, Entity{Ref: Ref{"wikidata", "entity", e.ID}, Label: wikidataLabel(e), Description: e.Descriptions["en"].Value, URI: "https://www.wikidata.org/wiki/" + e.ID, Fields: fields, Raw: raw, License: "CC0-1.0", RetrievedAt: time.Now().UTC()})
 	}
 	valid := map[string]bool{}
 	for _, e := range g.Entities {
@@ -258,4 +258,12 @@ func (p *Wikidata) children(ctx context.Context, id string) ([]string, error) {
 		}
 	}
 	return out, err
+}
+
+// Many proper names use Wikidata's language-neutral label rather than English.
+func wikidataLabel(e wdEntity) string {
+	if label := e.Labels["en"].Value; strings.TrimSpace(label) != "" {
+		return label
+	}
+	return e.Labels["mul"].Value
 }
