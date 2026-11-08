@@ -21,7 +21,7 @@ w.fetch=async(url,options={})=>{let data={};
  else throw Error('Unexpected API '+url);
  return{ok:true,json:async()=>JSON.parse(JSON.stringify(data))};
 };
-for(const file of ['app.js','library.js','intake.js','catalogue.js'])new vm.Script(readFileSync(path.join(base,file),'utf8')).runInContext(dom.getInternalVMContext());
+for(const file of ['app.js','library.js','intake.js','catalogue.js','navigation.js'])new vm.Script(readFileSync(path.join(base,file),'utf8')).runInContext(dom.getInternalVMContext());
 const call=code=>vm.runInContext(code,dom.getInternalVMContext()),wait=()=>new Promise(r=>setTimeout(r,15)),click=text=>{const b=[...w.document.querySelectorAll('#catalog-modal button')].find(b=>b.textContent.trim()===text);assert(b,'Missing '+text);b.click();};
 (async()=>{
  await wait();assert(w.document.querySelector('#tag-filters').textContent.includes('Custom type'),'Navigation must use runtime types');

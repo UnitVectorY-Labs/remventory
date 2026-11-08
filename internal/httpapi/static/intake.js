@@ -18,18 +18,18 @@ setWorkspace = function(mode) {
   previousWorkspace(mode);
   document.body.classList.toggle('workflow-mode', mode === 'intake');
   intakeNav.classList.toggle('selected', mode === 'intake');
+  if (mode === 'intake') intakeNav.setAttribute('aria-current', 'page'); else intakeNav.removeAttribute('aria-current');
   if (mode === 'intake') {
     document.querySelector('.library-heading h1').textContent = flow.job?.item_id ? 'Find item details' : 'Add to your collection';
     document.querySelector('#collection-navigation').hidden = true;
     document.querySelector('#add-item').hidden = true;
   } else {
     clearTimeout(flowTimer); flowEpoch++;
-    const url = new URL(location.href); url.searchParams.delete('identify'); history.replaceState(null, '', url);
   }
 };
 function flowError(host, error) { host.textContent = error.message || String(error); host.setAttribute('role', 'alert'); }
 function flowScreen(step, title, description) {
-  clearTimeout(flowTimer); flowEpoch++; libraryGeneration++;
+  clearTimeout(flowTimer); flowEpoch++; libraryGeneration++; requestGeneration++; currentResponse = null;
   setWorkspace('intake'); stage.replaceChildren();
   const root = el('section', 'flow-screen');
   const progress = el('nav', 'flow-progress'); progress.setAttribute('aria-label', 'Add item progress');
@@ -80,20 +80,23 @@ function jobPhoto(job) {
   } else frame.append(icon('box'));
   return frame;
 }
-function rememberJob(id) { const url = new URL(location.href); url.searchParams.set('identify', id); history.replaceState(null, '', url); }
+function rememberJob(id) { updateViewURL(`/identify/${encodeURIComponent(id)}`); }
 function releaseDraft() { for (const p of flow.photos || []) URL.revokeObjectURL(p.url); }
 function showCapture(kind = '') {
   if (activeController) return;
   releaseDraft(); flow = { kind, profile:libraryTypes.find(p=>p.name===kind), photos: [], text: '' };
-  const url = new URL(location.href); url.searchParams.delete('identify'); history.replaceState(null, '', url);
+  updateViewURL('/capture', { category: kind });
   if (kind && flow.profile) return photoStep();
-  return typeStep();
+  return typeStep(kind);
 }
-async function typeStep() {
+async function typeStep(requestedKind = '') {
+  if (!requestedKind) updateViewURL('/capture');
   const screen = flowScreen(0, 'What are you adding?', 'Choose an item type. Remy will use its fields, catalogue sources and instructions.');
   screen.body.append(el('p', 'muted', 'Loading your item types…'));
   try { await loadLibraryMeta(); } catch(e) { flowError(screen.body,e);return; }
   if(screen.epoch!==flowEpoch)return;
+  const requested = libraryTypes.find(p => p.name === requestedKind);
+  if (requested) { flow.profile = requested; flow.kind = requested.name; return photoStep(); }
   const options=el('div','kind-grid');
   for(const profile of libraryTypes){
     const choice=button('',()=>{flow.profile=profile;flow.kind=profile.name;photoStep();},'kind-choice');
@@ -104,6 +107,7 @@ async function typeStep() {
   screen.actions.append(button('Back to collection',()=>showLibrary()),button('Enter details myself',()=>openCatalog(),'plain-button'));
 }
 function photoStep() {
+  updateViewURL('/capture', { category: flow.kind });
   const screen = flowScreen(1, `Photograph your ${flow.kind || 'item'}`, 'Show the front and any identifying details: the back, base, label, model number or packaging. Remy will use the instructions for this item type.');
   const files = el('input'); files.type = 'file'; files.multiple = true; files.accept = 'image/jpeg,image/png,image/gif'; files.hidden = true; files.setAttribute('aria-label', 'Choose item photos');
   const camera = el('input'); camera.type = 'file'; camera.accept = 'image/*'; camera.setAttribute('capture', 'environment'); camera.hidden = true;
@@ -137,36 +141,48 @@ function photoStep() {
     catch (e) { flowError(status, e); next.disabled = false; }
   }
 }
-async function showIntake() {
+async function showIntake(page = 0, replace = false) {
+  if (activeController) return;
+  updateViewURL('/pending', { page: page ? page + 1 : '' }, replace);
   const screen = flowScreen(-1, 'Pending items', 'Pick up where you left off, or photograph another item.');
   screen.root.querySelector('.flow-progress').hidden = true;
   document.querySelector('.library-heading h1').textContent = 'Pending items';
   screen.actions.append(button('Back to collection', () => showLibrary()), button('Add an item', () => showCapture(), ''));
-  const list = el('div', 'pending-list'); screen.body.append(list); let page = 0, previous = '';
+  const list = el('div', 'pending-list'); screen.body.append(list);
+  list.append(el('p', 'muted', 'Loading pending items…'));
+  let previous = '';
   async function refresh() {
     try {
-      const data = await api('/api/intake'); if (screen.epoch !== flowEpoch) return;
-      const jobs = (data.jobs || []).filter(j => ['queued', 'processing', 'review', 'failed'].includes(j.state));
-      const signature = JSON.stringify([page, jobs.map(j => [j.id, j.state, j.result?.title, j.photos?.[0]?.id])]);
-      if (signature === previous) { flowTimer = setTimeout(refresh, 5000); return; }
-      previous = signature; list.replaceChildren();
-      if (!jobs.length) list.append(el('p', 'empty', 'Everything is up to date.'));
-      for (const j of jobs.slice(page * 6, page * 6 + 6)) {
-        const row = button('', () => openIdentification(j.id), 'pending-row');
-        const p = j.photos?.[0]; if (p) { const image = el('img'); image.src = `/api/intake/${j.id}/photos/${p.id}/thumbnail`; image.alt = ''; row.append(image); }
-        const info = el('span'); info.append(el('strong', '', j.result?.title || j.input?.text?.split('\n')[0] || j.category || 'Photographed item'), el('small', '', j.state === 'review' ? 'Ready to check →' : j.state === 'failed' ? 'Needs another try →' : 'Remy is identifying it…')); row.append(info); list.append(row);
+      const data = await api(`/api/intake/pending?limit=6&offset=${page * 6}`);
+      if (screen.epoch !== flowEpoch) return;
+      const pages = Math.max(1, Math.ceil(data.total / 6));
+      if (page >= pages) { showIntake(pages - 1, true); return; }
+      const signature = JSON.stringify([data.jobs, data.total]);
+      if (signature !== previous) {
+        previous = signature; list.replaceChildren();
+        if (!data.jobs.length) list.append(el('p', 'empty', 'Everything is up to date.'));
+        for (const j of data.jobs) {
+          const row = button('', () => openIdentification(j.id), 'pending-row');
+          if (j.photo_id) { const image = el('img'); image.src = `/api/intake/${j.id}/photos/${j.photo_id}/thumbnail`; image.alt = ''; row.append(image); }
+          const info = el('span'); info.append(el('strong', '', j.title || j.category || 'Photographed item'), el('small', '', j.state === 'review' ? 'Ready to check →' : j.state === 'failed' ? 'Needs another try →' : 'Remy is identifying it…')); row.append(info); list.append(row);
+        }
+        if (pages > 1) {
+          const nav = el('div', 'actions');
+          const prev = button('Previous', () => showIntake(page - 1)); prev.disabled = !page;
+          const next = button('Next', () => showIntake(page + 1)); next.disabled = page + 1 >= pages;
+          nav.append(prev, el('span', 'muted', `${page + 1} / ${pages}`), next); list.append(nav);
+        }
       }
-      if (jobs.length > 6) { const nav = el('div', 'actions'); const prev = button('Previous', () => { page--; refresh(); }); prev.disabled = !page; const next = button('Next', () => { page++; refresh(); }); next.disabled = (page + 1) * 6 >= jobs.length; nav.append(prev, el('span', 'muted', `${page + 1} / ${Math.ceil(jobs.length / 6)}`), next); list.append(nav); }
-      flowTimer = setTimeout(refresh, 5000);
-    } catch (e) { flowError(list, e); }
+      if (data.processing) flowTimer = setTimeout(refresh, 5000);
+    } catch (e) { if (screen.epoch === flowEpoch) flowError(list, e); }
   }
-  refresh();
+  await refresh();
 }
 async function openIdentification(id) {
   clearTimeout(flowTimer); rememberJob(id);
   const screen = flowScreen(2, 'Remy is identifying your item', 'Your photos are saved. You can leave this screen and come back later.');
   let job;
-  try { job = await api(`/api/intake/${id}?compact=1`); } catch (e) { flowError(screen.body, e); return; }
+  try { [job] = await Promise.all([api(`/api/intake/${id}?compact=1`), libraryTypes.length ? Promise.resolve() : loadLibraryMeta()]); } catch (e) { if (screen.epoch === flowEpoch) flowError(screen.body, e); return; }
   if (screen.epoch !== flowEpoch) return;
   if(flow.job?.id!==job.id){delete flow.customTitle;delete flow.personalAttributes;}
  flow.job = job; flow.kind = job.category; flow.profile=libraryTypes.find(p=>p.id===job.input?.template_id)||libraryTypes.find(p=>p.name===job.category); flow.cards = []; flow.selected = [];
@@ -374,10 +390,10 @@ async function researchItem(item) {
   catch (e) { flowError(screen.body, e); }
 }
 async function openCanonical(id) {
-  try { const data = await api(`/api/canonical/${id}/card`); setWorkspace('collection'); stage.replaceChildren(factCard(data.card)); const owners = el('div', 'actions'); for (const item of data.owners || []) owners.append(button(`View ${item.title}`, () => openItemDetail(item, {}))); stage.append(owners); }
-  catch (e) { renderError(e); }
+  updateViewURL(`/canonical/${encodeURIComponent(id)}`);
+  setWorkspace('collection'); const generation = ++libraryGeneration;
+  try { const data = await api(`/api/canonical/${id}/card`); if (generation !== libraryGeneration) return; stage.replaceChildren(factCard(data.card)); const owners = el('div', 'actions'); for (const item of data.owners || []) owners.append(button(`View ${item.title}`, () => openItemDetail(item, {}))); stage.append(owners); }
+  catch (e) { if (generation === libraryGeneration) renderError(e); }
 }
 const baseProposalCard = proposalCard;
 proposalCard = function(p, title) { if (p.type !== 'identification_link') return baseProposalCard(p, title); const card = el('article', 'card'); card.append(el('h3', '', p.proposed_payload.title || 'Check an item match'), button('Review match', () => openIdentification(p.proposed_payload.job_id), '')); return card; };
-const resumeJob = new URLSearchParams(location.search).get('identify');
-if (resumeJob) Promise.resolve().then(() => openIdentification(resumeJob));

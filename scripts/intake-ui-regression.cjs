@@ -25,7 +25,7 @@ w.fetch=async(url,options={})=>{let data;
  else throw Error('Unexpected API: '+url);
  return{ok:true,json:async()=>data};
 };
-for(const file of ['app.js','library.js','intake.js'])new vm.Script(fs.readFileSync(path.join(base,file),'utf8')).runInContext(dom.getInternalVMContext());
+for(const file of ['app.js','library.js','intake.js','navigation.js'])new vm.Script(fs.readFileSync(path.join(base,file),'utf8')).runInContext(dom.getInternalVMContext());
 const call=code=>vm.runInContext(code,dom.getInternalVMContext());
 const wait=()=>new Promise(resolve=>setTimeout(resolve,10));
 const click=text=>{const b=[...w.document.querySelectorAll('button')].find(b=>b.textContent.trim()===text);assert(b,'Button missing: '+text);b.click()};

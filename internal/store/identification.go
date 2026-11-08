@@ -64,6 +64,46 @@ type IdentificationJob struct {
 
 const jobColumns = `id,coalesce(item_id::text,''),category,input,state,attempts,result,error,created_at,updated_at,coalesce(lease_token::text,'')`
 
+type PendingIdentification struct {
+	ID       string `json:"id"`
+	State    string `json:"state"`
+	Title    string `json:"title"`
+	Category string `json:"category"`
+	PhotoID  string `json:"photo_id"`
+}
+
+type PendingIdentificationPage struct {
+	Jobs       []PendingIdentification `json:"jobs"`
+	Total      int                     `json:"total"`
+	Processing bool                    `json:"processing"`
+}
+
+// PendingIdentifications projects only the fields needed by the list. Full result
+// graphs and search responses never leave Postgres, even for off-screen jobs.
+func (s *Store) PendingIdentifications(ctx context.Context, limit, offset int) (PendingIdentificationPage, error) {
+	page := PendingIdentificationPage{}
+	err := s.pool.QueryRow(ctx, `
+with pending as not materialized (
+ select * from identification_jobs where user_id=$1 and state in ('queued','processing','review','failed')
+), page as (
+ select id,state,category,coalesce(nullif(result->>'title',''),nullif(split_part(input->>'text',E'\n',1),''),category) as title,item_id,created_at
+ from pending order by created_at desc,id desc limit $2 offset $3
+)
+select meta.total,meta.processing,coalesce(jsonb_agg(jsonb_build_object(
+ 'id',p.id,'state',p.state,'title',p.title,'category',p.category,'photo_id',coalesce(photo.id::text,''))
+ order by p.created_at desc,p.id desc) filter (where p.id is not null),'[]'::jsonb)
+from (select count(*) as total,coalesce(bool_or(state in ('queued','processing')),false) as processing from pending) meta
+left join page p on true
+left join lateral (
+ select id from identification_photos where job_id=p.id
+ union all
+ select id from item_assets where item_id=p.item_id and not exists(select 1 from identification_photos where job_id=p.id)
+ order by id limit 1
+) photo on true
+group by meta.total,meta.processing`, DefaultUserID, limit, offset).Scan(&page.Total, &page.Processing, &page.Jobs)
+	return page, err
+}
+
 func scanJob(row rowScanner) (IdentificationJob, error) {
 	var j IdentificationJob
 	err := row.Scan(&j.ID, &j.ItemID, &j.Category, &j.Input, &j.State, &j.Attempts, &j.Result, &j.Error, &j.CreatedAt, &j.UpdatedAt, &j.LeaseToken)
@@ -141,9 +181,19 @@ func (s *Store) Identification(ctx context.Context, id string) (IdentificationJo
 	j.Photos, err = s.IdentificationPhotos(ctx, id)
 	return j, err
 }
+
+const identificationPhotosSQL = `select id,job_id,object_key,thumbnail_key,mime_type,filename,width,height,size_bytes from identification_photos where job_id=$1
+ union all select a.id,j.id,a.object_key,coalesce(a.thumbnail_object_key,a.object_key),a.mime_type,a.original_filename,a.width,a.height,a.size_bytes from identification_jobs j join item_assets a on a.item_id=j.item_id where j.id=$1 and not exists(select 1 from identification_photos where job_id=$1)`
+
+// IdentificationPhoto checks ownership without decoding the identification result.
+func (s *Store) IdentificationPhoto(ctx context.Context, jobID, photoID string) (IdentificationPhoto, error) {
+	var p IdentificationPhoto
+	err := s.pool.QueryRow(ctx, `select p.* from (`+identificationPhotosSQL+`) p join identification_jobs j on j.id=p.job_id where p.id=$2 and j.user_id=$3`, jobID, photoID, DefaultUserID).Scan(&p.ID, &p.JobID, &p.Key, &p.ThumbnailKey, &p.MIME, &p.Filename, &p.Width, &p.Height, &p.Size)
+	return p, err
+}
+
 func (s *Store) IdentificationPhotos(ctx context.Context, id string) ([]IdentificationPhoto, error) {
-	rows, err := s.pool.Query(ctx, `select id,job_id,object_key,thumbnail_key,mime_type,filename,width,height,size_bytes from identification_photos where job_id=$1
- union all select a.id,j.id,a.object_key,coalesce(a.thumbnail_object_key,a.object_key),a.mime_type,a.original_filename,a.width,a.height,a.size_bytes from identification_jobs j join item_assets a on a.item_id=j.item_id where j.id=$1 and not exists(select 1 from identification_photos where job_id=$1) order by id`, id)
+	rows, err := s.pool.Query(ctx, identificationPhotosSQL+` order by id`, id)
 	if err != nil {
 		return nil, err
 	}

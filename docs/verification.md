@@ -113,4 +113,5 @@ Offline UI regressions (install `jsdom` separately and expose it on `NODE_PATH`)
 node scripts/ui-regression.cjs
 node scripts/intake-ui-regression.cjs
 node scripts/catalogue-ui-regression.cjs
+node scripts/navigation-ui-regression.cjs
 ```

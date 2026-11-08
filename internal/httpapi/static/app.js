@@ -69,12 +69,6 @@ stopRequest.addEventListener("click", () => {
   activeController.abort();
 });
 
-const initialMessage = new URLSearchParams(window.location.search).get("message");
-if (initialMessage) {
-  input.value = initialMessage;
-  form.requestSubmit();
-}
-
 async function askRemy(message) {
   const generation = ++requestGeneration;
   activeController = new AbortController();
@@ -457,6 +451,7 @@ function itemDetail(data) {
 }
 
 function openItemDetail(item, category) {
+  updateViewURL(`/items/${encodeURIComponent(item.id)}`);
   if (typeof setWorkspace === "function") setWorkspace("collection");
   if (typeof libraryGeneration !== "undefined") ++libraryGeneration;
   currentResponse={state:"completed",components:[{type:"item_detail",data:{item,category}}]};

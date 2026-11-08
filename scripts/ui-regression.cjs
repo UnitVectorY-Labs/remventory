@@ -27,7 +27,7 @@ w.fetch=async(path,options={})=>{
  else throw Error('Unexpected path '+path);
  return {ok:true,json:async()=>data};
 };
-for(const file of ['app.js','library.js'])new vm.Script(readFileSync(base+file,'utf8')).runInContext(dom.getInternalVMContext());
+for(const file of ['app.js','library.js','navigation.js'])new vm.Script(readFileSync(base+file,'utf8')).runInContext(dom.getInternalVMContext());
 (async()=>{
  await new Promise(resolve=>setTimeout(resolve,10));
  assert.equal(w.document.querySelector('#remy-controls').hidden,false,'Remy composer must be visible');
