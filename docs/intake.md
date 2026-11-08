@@ -7,17 +7,20 @@ choose **Find this item**. Photos and identification are durable after submissio
 **Pending items** lets you return later or photograph another object immediately.
 
 For video games, include the console banner and edition text in your photos.
-When the selected template includes the **Console** field, the Save screen asks
-you to choose and confirm the console against the case or cartridge. Remy's
-suggestion is a clue; a game's catalogue platform list does not identify your
-physical copy. Nintendo Switch and Nintendo Switch 2 are separate choices.
+When the selected template includes the **Console** field, the Save screen prefills
+an editable console suggestion from the photo analysis and shows the game's
+catalogue platforms. Keep the suggestion or change it, then use **Add to my
+inventory** to accept the title, console and tags together; there is no separate
+console checkbox. If the photo is inconclusive and several platforms are listed,
+choose the console shown on your copy. Nintendo Switch and Nintendo Switch 2
+are separate choices.
 If a console is missing from your shared choices, type its name and use
 **Approve new console choice** before confirming your copy. This approves a
 vocabulary proposal; **Add to my inventory** separately confirms the item.
 The confirmed console is also added as a tag; duplicate tags and the generic
-Consoles default are removed for this intake. Existing pending scans can use the
-same review without taking photos again. Visible edition wording is retained in
-the suggested name when it matches the selected game.
+Consoles default are removed for this intake. Existing pending scans reuse their
+saved photo analysis, so they usually need no reprocessing or new photos. Visible
+edition wording is retained in the suggested name when it matches the selected game.
 
 Remy looks up specific figure variants in AmiiboAPI. A Mario character match
 alone is insufficient: the Super Smash Bros. figure and Super Mario Bros. figure

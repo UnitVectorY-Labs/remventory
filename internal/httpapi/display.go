@@ -1,8 +1,11 @@
 package httpapi
 
 import (
-	"github.com/UnitVectorY-Labs/remventory/internal/authority"
+	"encoding/json"
 	"net/http"
+
+	"github.com/UnitVectorY-Labs/remventory/internal/authority"
+	"github.com/UnitVectorY-Labs/remventory/internal/intake"
 )
 
 func (a api) identificationCards(w http.ResponseWriter, r *http.Request) {
@@ -23,6 +26,22 @@ func (a api) identificationCards(w http.ResponseWriter, r *http.Request) {
 		}
 		policy = &profile.IntakeConfig
 	}
+	fields, err := a.store.ListFields(r.Context())
+	if err != nil {
+		writeError(w, 500, "load console choices")
+		return
+	}
+	options := []string{}
+	for _, field := range fields {
+		if field.Key == "console" {
+			var config struct {
+				Options []string `json:"options"`
+			}
+			_ = json.Unmarshal(field.Config, &config)
+			options = config.Options
+		}
+	}
+	hints := []intake.ConsoleHint{}
 	cards := []authority.DisplayCard{}
 	for _, m := range j.Result.Matches {
 		c, e := a.intake.CardForPolicy(r.Context(), m.Graph, policy)
@@ -34,8 +53,9 @@ func (a api) identificationCards(w http.ResponseWriter, r *http.Request) {
 			c.Title = m.Candidate.Label
 		}
 		cards = append(cards, c)
+		hints = append(hints, intake.SuggestConsole(j.Result, m.Graph, options))
 	}
-	writeJSON(w, 200, map[string]any{"cards": cards})
+	writeJSON(w, 200, map[string]any{"cards": cards, "console_hints": hints, "console_hint": intake.SuggestConsole(j.Result, authority.Graph{}, options)})
 }
 func (a api) itemCards(w http.ResponseWriter, r *http.Request) {
 	if !a.intakeReady(w) {
