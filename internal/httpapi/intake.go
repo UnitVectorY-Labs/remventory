@@ -7,6 +7,7 @@ import (
 	"github.com/UnitVectorY-Labs/remventory/internal/store"
 	"io"
 	"net/http"
+	"strconv"
 	"strings"
 )
 
@@ -33,6 +34,38 @@ func (a api) listIdentifications(w http.ResponseWriter, r *http.Request) {
 		jobs[i].Result.Searches = nil
 	}
 	writeJSON(w, 200, map[string]any{"jobs": jobs, "worker_enabled": a.cfg.WorkerEnabled})
+}
+
+func (a api) pendingIdentifications(w http.ResponseWriter, r *http.Request) {
+	if !a.intakeReady(w) {
+		return
+	}
+	limit := 6
+	if raw := r.URL.Query().Get("limit"); raw != "" {
+		var err error
+		limit, err = strconv.Atoi(raw)
+		if err != nil || limit < 1 || limit > 100 {
+			writeError(w, 400, "limit must be between 1 and 100")
+			return
+		}
+	}
+	offset := 0
+	if raw := r.URL.Query().Get("offset"); raw != "" {
+		var err error
+		offset, err = strconv.Atoi(raw)
+		if err != nil || offset < 0 {
+			writeError(w, 400, "offset must be a non-negative integer")
+			return
+		}
+	}
+	page, err := a.store.PendingIdentifications(r.Context(), limit, offset)
+	if err != nil {
+		a.logger.Error("list pending identifications", "error", err)
+		writeError(w, 500, "could not load pending items")
+		return
+	}
+	w.Header().Set("Cache-Control", "no-store")
+	writeJSON(w, 200, page)
 }
 func (a api) createIdentification(w http.ResponseWriter, r *http.Request) {
 	if !a.intakeReady(w) {
@@ -196,32 +229,25 @@ func (a api) identificationImage(w http.ResponseWriter, r *http.Request) {
 	if !a.intakeReady(w) || a.images == nil {
 		return
 	}
-	job, err := a.store.Identification(r.Context(), r.PathValue("id"))
+	p, err := a.store.IdentificationPhoto(r.Context(), r.PathValue("id"), r.PathValue("photo"))
 	if err != nil {
-		writeError(w, 404, "identification not found")
+		writeError(w, 404, "photo not found")
 		return
 	}
-	for _, p := range job.Photos {
-		if p.ID != r.PathValue("photo") {
-			continue
-		}
-		key := p.ThumbnailKey
-		if r.PathValue("variant") == "original" {
-			key = p.Key
-		}
-		obj, err := a.images.Get(r.Context(), key)
-		if err != nil {
-			writeError(w, 404, "photo not found")
-			return
-		}
-		defer obj.Body.Close()
-		w.Header().Set("Content-Type", obj.ContentType)
-		w.Header().Set("X-Content-Type-Options", "nosniff")
-		w.Header().Set("Cache-Control", "private, max-age=3600")
-		_, _ = io.Copy(w, obj.Body)
+	key := p.ThumbnailKey
+	if r.PathValue("variant") == "original" {
+		key = p.Key
+	}
+	obj, err := a.images.Get(r.Context(), key)
+	if err != nil {
+		writeError(w, 404, "photo not found")
 		return
 	}
-	writeError(w, 404, "photo not found")
+	defer obj.Body.Close()
+	w.Header().Set("Content-Type", obj.ContentType)
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	w.Header().Set("Cache-Control", "private, max-age=3600")
+	_, _ = io.Copy(w, obj.Body)
 }
 func (a api) authoritySearch(w http.ResponseWriter, r *http.Request) {
 	if !a.intakeReady(w) {

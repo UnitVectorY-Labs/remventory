@@ -4,6 +4,8 @@ Tell Remy what you want to accomplish in the visible composer: “Find my Wii ga
 
 The visual collection also supports direct browsing. Select several tags to find items carrying all of them. Text search finds values in fields and tags.
 
+**Pending items** shows unfinished identifications, six at a time. It refreshes while Remy is processing jobs. Collection filters, list pages, item details, and the main workspaces have shareable URLs; refresh or use Back and Forward to return to them. Unsaved photo selections and form edits are not stored in the URL.
+
 ## Define fields and suggestions
 
 Open **Administration → Common fields** to see the shared vocabulary and choose **New common field**. Fields such as Title, Description, Year, and Links are predefined. Define another field with a stable key, label, and value type, then review and approve it before using it on items.

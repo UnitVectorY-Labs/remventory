@@ -10,6 +10,7 @@ const button = (text, action, className = "secondary", iconName = "") => { const
 let workspaceMode = "collection";
 function setWorkspace(mode) {
   workspaceMode = mode;
+  stage.removeAttribute('aria-busy');
   document.querySelector(".library-heading h1").textContent = mode === "admin" ? "Administration" : mode === "review" ? "Review changes" : "My collection";
   document.querySelector("#add-item").hidden = mode === "admin";
   document.querySelector("#collection-navigation").hidden = mode === "admin";
@@ -21,12 +22,18 @@ function setWorkspace(mode) {
 document.querySelector("#admin-home").onclick = () => showAdmin();
 document.querySelector("#library-home").onclick = () => { libraryFilters = { q: "", category_id: "", tag: "", location: "" }; showLibrary(); };
 document.querySelector("#add-item").onclick = () => openCatalog();
-document.querySelector("#review-changes").onclick = async () => {
+document.querySelector("#review-changes").onclick = () => showReview();
+async function showReview() {
   if (activeController) return;
-  setWorkspace("review"); libraryGeneration++;
-  try { await refreshPendingProposals(false); renderResponse({ summary: pendingProposals.length ? "Pending changes." : "No pending changes.", components: [] }); }
-  catch (error) { renderError(error); }
-};
+  updateViewURL('/review');
+  setWorkspace("review"); const generation = ++libraryGeneration;
+  stage.replaceChildren(el('p', 'muted', 'Loading pending changes…'));
+  try {
+    await refreshPendingProposals(false);
+    if (generation !== libraryGeneration) return;
+    renderResponse({ summary: pendingProposals.length ? "Pending changes." : "No pending changes.", components: [] });
+  } catch (error) { if (generation === libraryGeneration) renderError(error); }
+}
 document.querySelector("#toggle-remy").onclick = () => input.focus();
 
 async function loadLibraryMeta() {
@@ -46,6 +53,7 @@ async function loadLibraryMeta() {
 
 async function showLibrary(page = 0) {
   if (activeController) return;
+  updateViewURL('/', { ...libraryFilters, page: page ? page + 1 : '' });
   setWorkspace("collection");
   const generation = ++libraryGeneration; ++requestGeneration;
   currentResponse = null; libraryPage = page;
@@ -334,7 +342,7 @@ async function openTypeEditor(existing = null) {
   function restore() { catalogModal.replaceChildren(dialogHeader(existing ? "Edit template" : "Create a starting template"), content); catalogModal.oncancel = null; }
   restore(); catalogModal.onclose = null; if (!catalogModal.open) catalogModal.showModal();
 }
-if (!new URLSearchParams(location.search).get("message") && !new URLSearchParams(location.search).get("identify")) showLibrary();
+
 
 async function proposePrimaryPicture(item, imageID) {
   try {
@@ -353,6 +361,7 @@ function vocabularyCard(vocabulary) {
 async function showAdmin() {
   if (activeController) return;
   const generation = ++libraryGeneration; ++requestGeneration;
+  updateViewURL('/admin');
   currentResponse = null; setWorkspace("admin");
   stage.replaceChildren(el("p", "muted", "Loading administration…"));
   try {

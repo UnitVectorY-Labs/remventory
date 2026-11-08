@@ -55,6 +55,7 @@ func New(opts Options) http.Handler {
 	mux.HandleFunc("GET /api/items/{id}/cards", api.withToken(api.itemCards))
 	mux.HandleFunc("GET /api/canonical/{id}/card", api.withToken(api.canonicalCard))
 	mux.HandleFunc("GET /api/intake", api.withToken(api.listIdentifications))
+	mux.HandleFunc("GET /api/intake/pending", api.withToken(api.pendingIdentifications))
 	mux.HandleFunc("POST /api/intake", api.withToken(api.createIdentification))
 	mux.HandleFunc("POST /api/intake/enrich", api.withToken(api.enrichCollection))
 	mux.HandleFunc("GET /api/intake/{id}", api.withToken(api.getIdentification))
@@ -70,6 +71,9 @@ func New(opts Options) http.Handler {
 
 	mux.HandleFunc("GET /readyz", api.ready)
 	mux.HandleFunc("GET /{$}", api.index)
+	for _, path := range []string{"/pending", "/review", "/admin", "/capture", "/items/{id}", "/identify/{id}", "/canonical/{id}"} {
+		mux.HandleFunc("GET "+path, api.index)
+	}
 	mux.Handle("GET /static/", http.StripPrefix("/static/", http.FileServerFS(staticFS())))
 	if opts.MCPHandler != nil {
 		mux.Handle("/mcp", opts.MCPHandler)
@@ -182,10 +186,6 @@ func (a api) configStatus(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a api) index(w http.ResponseWriter, r *http.Request) {
-	if r.URL.Path != "/" {
-		http.NotFound(w, r)
-		return
-	}
 	http.ServeFileFS(w, r, staticFS(), "index.html")
 }
 
