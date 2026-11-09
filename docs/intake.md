@@ -76,8 +76,8 @@ fields and photos; **Correct catalogue match** starts another review. The final
 review offers an explicit checkbox to replace previously linked matches. This
 changes ownership associations, not shared source metadata or your personal data.
 
-Collection cards use both color and text: green **Identified** means an approved
-catalogue link exists; amber **Needs review** means results await confirmation;
+Identified collection cards show the item name and tags without a status pill.
+Amber **Needs review** means results await confirmation;
 blue **Identifying** means server work is pending; gray **Not identified** means
 there is no approved catalogue link. An identified work does not imply that its
 physical edition or pressing has been confirmed.

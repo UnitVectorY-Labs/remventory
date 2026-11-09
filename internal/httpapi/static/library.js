@@ -74,7 +74,7 @@ async function showLibrary(page = 0) {
     stage.append(toolbar);
     const caption = el("div", "shelf-caption");
     caption.append(el("p", "", `${result.total} ${result.total === 1 ? "item" : "items"}`));
-    const legend = el('p', 'status-legend'); legend.append(el('span', 'identified', '● Identified'), el('span', 'review', '● Needs review'), el('span', 'unidentified', '○ Not identified')); caption.append(legend);
+    const legend = el('p', 'status-legend'); legend.append(el('span', 'review', '● Needs review'), el('span', 'unidentified', '○ Not identified')); caption.append(legend);
     const active = Object.entries(libraryFilters).filter(([,value]) => value);
     if (active.length) caption.append(button("Clear filters", () => { libraryFilters = { q: "", category_id: "", tag: "", location: "" }; showLibrary(); }, "plain-button"));
     if (libraryFilters.tag) caption.append(el("span", "tag selected", libraryFilters.tag));
@@ -94,9 +94,9 @@ async function showLibrary(page = 0) {
         const info = el("div", "inventory-info"); info.append(el("h2", "", item.title));
         const tags = el("div", "card-tags"); for (const tag of (item.tags || []).filter(t => libraryTypes.some(type => (type.default_tags || []).includes(t))).slice(0, 2)) tags.append(el("span", "tag", tag)); info.append(tags);
         const status = result.identification_status?.[item.id] || 'unidentified';
-        const statusLabels = {identified:'Identified',review:'Needs review',processing:'Identifying…',unidentified:'Not identified'};
+        const statusLabels = {review:'Needs review',processing:'Identifying…',unidentified:'Not identified'};
         card.dataset.identification = status;
-        info.append(el('span', `identification-badge ${status}`, statusLabels[status] || statusLabels.unidentified));
+        if (status !== 'identified') info.append(el('span', `identification-badge ${status}`, statusLabels[status] || statusLabels.unidentified));
         card.append(picture, info); grid.append(card);
       }
       stage.append(grid);
