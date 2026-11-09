@@ -131,7 +131,13 @@ func (a api) createIdentification(w http.ResponseWriter, r *http.Request) {
 		stored = append(stored, p)
 		photos = append(photos, store.IdentificationPhoto{ID: p.ID, Key: p.OriginalKey, ThumbnailKey: p.ThumbnailKey, MIME: p.MIMEType, Filename: p.OriginalFilename, Width: p.Width, Height: p.Height, Size: int64(len(p.Original))})
 	}
-	job, err := a.store.CreateIdentification(r.Context(), category, "", store.IdentificationInput{Text: r.FormValue("text"), TemplateID: r.FormValue("template_id")}, photos)
+	var job store.IdentificationJob
+	var err error
+	if id := r.PathValue("id"); id != "" {
+		job, err = a.store.AddIdentificationPhotos(r.Context(), id, photos)
+	} else {
+		job, err = a.store.CreateIdentification(r.Context(), category, "", store.IdentificationInput{Text: r.FormValue("text"), TemplateID: r.FormValue("template_id")}, photos)
+	}
 	if err != nil {
 		writeError(w, 400, err.Error())
 		return

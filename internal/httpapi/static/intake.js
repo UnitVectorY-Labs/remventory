@@ -192,7 +192,8 @@ async function openIdentification(id) {
   if (['rejected', 'search_only'].includes(job.state)) {
     screen.body.append(jobPhoto(job), el('p', '', job.state === 'search_only' ? 'Kept as an identification without adding another owned item.' : 'This identification was discarded.'));
   } else if (job.state === 'failed') {
-    screen.body.append(el('p', '', 'Remy could not finish identifying this item. Your photos are saved.'), button('Try again', () => jobAction(job, 'retry')));
+    screen.body.append(jobPhoto(job), el('p', '', 'Remy could not finish identifying this item. Your photos are saved.'), button('Try again', () => jobAction(job, 'retry')));
+    appendMorePhotos(screen, job);
   } else {
     const status = el('div', 'processing-status');
     status.setAttribute('hx-get', `/api/intake/${id}/status`);
@@ -252,7 +253,59 @@ async function matchStep(job) {
     }
     render();
   }
+  appendMorePhotos(screen, job);
   screen.body.append(button('Discard this identification', () => jobAction(job, 'reject'), 'plain-button quiet-action'));
+}
+function appendMorePhotos(screen, job) {
+  if (job.item_id || (job.photos || []).length >= 8) return;
+  const recovery = el('div', 'flow-body');
+  recovery.append(button('Add photos and try again', () => morePhotosStep(job), 'secondary'));
+  screen.root.insertBefore(recovery, screen.actions);
+}
+function morePhotosStep(job) {
+  const screen = flowScreen(2, 'Show Remy another angle', 'Add a clear view of the base, label or packaging. Remy will search again using all your photos.');
+  const selected = [], strip = el('div', 'capture-strip'), status = el('p', 'flow-status');
+  status.setAttribute('role', 'status');
+  const files = el('input'); files.type = 'file'; files.multiple = true; files.accept = 'image/jpeg,image/png,image/gif'; files.hidden = true;
+  files.setAttribute('aria-label', 'Choose additional photos');
+  const camera = el('input'); camera.type = 'file'; camera.accept = files.accept; camera.setAttribute('capture', 'environment'); camera.hidden = true;
+  camera.setAttribute('aria-label', 'Take an additional photo');
+  const next = button('Search again with these photos', async () => {
+    next.disabled = true; back.disabled = true; choose.disabled = true; take.disabled = true;
+    strip.querySelectorAll('button').forEach(b => b.disabled = true);
+    status.textContent = 'Saving photos and restarting identification…';
+    const body = new FormData(); selected.forEach(file => body.append('images', file));
+    try {
+      await api(`/api/intake/${job.id}/photos`, {method: 'POST', body});
+      if (screen.epoch === flowEpoch) await openIdentification(job.id);
+    } catch (e) {
+      if (screen.epoch !== flowEpoch) return;
+      status.textContent = e.message; next.disabled = false; back.disabled = false; choose.disabled = false; take.disabled = false;
+      strip.querySelectorAll('button').forEach(b => b.disabled = false);
+    }
+  }, '');
+  const back = button('Cancel', () => openIdentification(job.id));
+  function render() {
+    strip.replaceChildren(); next.disabled = !selected.length;
+    selected.forEach((file, index) => {
+      const box = el('div', 'capture-photo');
+      box.append(el('span', '', file.name), button('Remove', () => { selected.splice(index, 1); render(); }, 'plain-button'));
+      strip.append(box);
+    });
+  }
+  function add(input) {
+    status.textContent = '';
+    for (const file of input.files) {
+      if (selected.length + (job.photos || []).length >= 8) { status.textContent = 'Use up to eight photos of one item.'; break; }
+      if (!['image/jpeg','image/png','image/gif'].includes(file.type) || file.size > 12 * 1024 * 1024) { status.textContent = 'Choose JPEG, PNG or GIF photos up to 12 MB each.'; continue; }
+      selected.push(file);
+    }
+    input.value = ''; render();
+  }
+  files.onchange = () => add(files); camera.onchange = () => add(camera);
+  const choose = button('Choose photos', () => files.click(), 'secondary'), take = button('Take a photo', () => camera.click());
+  screen.body.append(jobPhoto(job), el('p', 'muted', `${job.photos.length} saved photo${job.photos.length === 1 ? '' : 's'} will be kept.`), take, choose, files, camera, strip, status);
+  screen.actions.append(back, next); render();
 }
 async function ownershipNote(job, host, epoch) {
   const note = el('div', 'ownership-note'); host.append(note);

@@ -59,6 +59,7 @@ func New(opts Options) http.Handler {
 	mux.HandleFunc("POST /api/intake", api.withToken(api.createIdentification))
 	mux.HandleFunc("POST /api/intake/enrich", api.withToken(api.enrichCollection))
 	mux.HandleFunc("GET /api/intake/{id}", api.withToken(api.getIdentification))
+	mux.HandleFunc("POST /api/intake/{id}/photos", api.withToken(api.createIdentification))
 	mux.HandleFunc("POST /api/intake/{id}/action", api.withToken(api.identificationAction))
 	mux.HandleFunc("POST /api/intake/{id}/proposal", api.withToken(api.proposeIdentification))
 	mux.HandleFunc("POST /api/intake/{id}/resolve", api.withToken(api.resolveForIdentification))

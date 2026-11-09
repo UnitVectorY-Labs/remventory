@@ -41,7 +41,14 @@ canonical record in one transaction. For existing items, **Find a match** uses
 the same flow; **Save match** attaches external knowledge while preserving your
 personal fields. Existing active research is resumed rather than duplicated.
 
-An uncertain result can be searched by character/title, retried, or discarded.
+For an unsaved pending item, choose **Add photos and try again** on the match or
+failed-identification screen. Take or choose another view of the same object,
+then choose **Search again with these photos**. Remy keeps the original photos
+and searches again using all of them (up to eight total). Cancel leaves the
+pending item unchanged. Wait for an active search to finish before adding photos;
+the new result still needs your review and confirmation before saving.
+
+An uncertain result can also be searched by character/title, retried, or discarded.
 The system distinguishes a photographed product variant from its character or
 underlying film/work. Box-set review lists contained titles rather than all
 cached graph nodes. Detailed source data remains cached and searchable but is

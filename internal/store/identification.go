@@ -173,6 +173,56 @@ func (s *Store) CreateIdentification(ctx context.Context, category, itemID strin
 	}
 	return j, tx.Commit(ctx)
 }
+
+// AddIdentificationPhotos keeps the draft together and queues a fresh analysis atomically.
+func (s *Store) AddIdentificationPhotos(ctx context.Context, id string, photos []IdentificationPhoto) (IdentificationJob, error) {
+	if len(photos) == 0 || len(photos) > 8 {
+		return IdentificationJob{}, fmt.Errorf("select one to eight photos")
+	}
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return IdentificationJob{}, err
+	}
+	defer tx.Rollback(ctx)
+	j, err := scanJob(tx.QueryRow(ctx, `select `+jobColumns+` from identification_jobs where id=$1 and user_id=$2 for update`, id, DefaultUserID))
+	if err != nil {
+		return j, err
+	}
+	if j.ItemID != "" || (j.State != "review" && j.State != "failed") {
+		return j, fmt.Errorf("photos can be added to an unsaved item awaiting review or another try; reopen the pending item")
+	}
+	var count int
+	if err = tx.QueryRow(ctx, `select count(*) from identification_photos where job_id=$1`, id).Scan(&count); err != nil {
+		return j, err
+	}
+	if count+len(photos) > 8 {
+		return j, fmt.Errorf("use up to eight photos of one item")
+	}
+	for _, p := range photos {
+		_, err = tx.Exec(ctx, `insert into identification_photos(id,job_id,object_key,thumbnail_key,mime_type,filename,width,height,size_bytes) values($1,$2,$3,$4,$5,$6,$7,$8,$9)`, p.ID, id, p.Key, p.ThumbnailKey, p.MIME, p.Filename, p.Width, p.Height, p.Size)
+		if err != nil {
+			return j, err
+		}
+	}
+	// A selection from the previous search must not approve the new result.
+	_, err = tx.Exec(ctx, `update proposals set status='rejected',reason='Superseded by additional photos and a new identification.',decided_at=now() where user_id=$1 and type='identification_link' and status='pending' and proposed_payload_jsonb->>'job_id'=$2`, DefaultUserID, id)
+	if err != nil {
+		return j, err
+	}
+	_, err = tx.Exec(ctx, `update identification_jobs set state='queued',result='{}'::jsonb,attempts=0,error='',lease_token=null,lease_until=null,available_at=now(),updated_at=now() where id=$1`, id)
+	if err != nil {
+		return j, err
+	}
+	if err = tx.Commit(ctx); err != nil {
+		return j, err
+	}
+	j.State = "queued"
+	j.Result = IdentificationResult{}
+	j.Error = ""
+	j.Attempts = 0
+	return j, nil
+}
+
 func (s *Store) Identification(ctx context.Context, id string) (IdentificationJob, error) {
 	j, err := scanJob(s.pool.QueryRow(ctx, `select `+jobColumns+` from identification_jobs where id=$1 and user_id=$2`, id, DefaultUserID))
 	if err != nil {
