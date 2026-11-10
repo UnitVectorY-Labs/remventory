@@ -39,7 +39,34 @@ itemDetail = function (data) {
     img.src = p.original_url || `/api/images/${p.id}/original`;
     img.alt = item.title;
     img.onclick = () => showItemImage(item.title, img.src);
+    img.tabIndex = 0;
+    img.setAttribute("role", "button");
+    img.setAttribute("aria-label", "View selected photo full size");
+    img.onkeydown = event => {
+      if (event.key === "Enter" || event.key === " ") { event.preventDefault(); img.click(); }
+    };
     photo.append(img);
+    if (item.images.length > 1) {
+      const thumbnails = el("div", "photo-switcher item-photo-thumbnails");
+      thumbnails.setAttribute("role", "group");
+      thumbnails.setAttribute("aria-label", "Item photos");
+      for (const [index, image] of item.images.entries()) {
+        const pick = button("", () => {
+          img.src = image.original_url || `/api/images/${image.id}/original`;
+          img.alt = `${item.title || 'Your item'} — photo ${index + 1}`;
+          thumbnails.querySelectorAll('button').forEach(b => b.setAttribute('aria-pressed', String(b === pick)));
+        }, "secondary");
+        pick.setAttribute("aria-label", `View photo ${index + 1}${image.is_primary ? ' (primary)' : ''}`);
+        pick.setAttribute("aria-pressed", String(image.id === p.id));
+        const thumb = el("img");
+        thumb.src = image.thumbnail_url || `/api/images/${image.id}/thumbnail?v=2`;
+        thumb.alt = "";
+        thumb.loading = "lazy";
+        pick.append(thumb);
+        thumbnails.append(pick);
+      }
+      photo.append(thumbnails);
+    }
   }
   const catalogue = el("section", "catalogue-facts");
   catalogue.append(

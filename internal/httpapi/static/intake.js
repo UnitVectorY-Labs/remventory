@@ -61,7 +61,7 @@ function factCard(card, compact = false) {
 }
 function jobPhoto(job) {
   const frame = el('div', 'flow-picture');
-  const p = job.photos?.[0];
+  const p = job.photos?.find(photo => photo.id === flow.primaryPhotoID) || job.photos?.[0];
   if (p) {
     const image = el('img'); image.alt = job.result?.title || 'Your photographed item';
     image.src = `/api/intake/${job.id}/photos/${p.id}/original`;
@@ -71,11 +71,13 @@ function jobPhoto(job) {
       for (const [index, photo] of job.photos.entries()) {
         const pick = button(String(index + 1), () => {
           image.src = `/api/intake/${job.id}/photos/${photo.id}/original`;
+          flow.primaryPhotoID = photo.id;
           photos.querySelectorAll('button').forEach(b => b.setAttribute('aria-pressed', String(b === pick)));
         }, 'secondary');
-        pick.setAttribute('aria-label', `View photo ${index + 1}`); pick.setAttribute('aria-pressed', String(index === 0)); photos.append(pick);
+        pick.setAttribute('aria-label', `View photo ${index + 1}`); pick.setAttribute('aria-pressed', String(photo.id === p.id)); photos.append(pick);
       }
       frame.append(photos);
+      if (job.state === 'review') frame.append(el('p', 'photo-selection-note', 'The selected photo will be your primary picture when you save.'));
     }
   } else frame.append(icon('box'));
   return frame;
@@ -184,7 +186,7 @@ async function openIdentification(id) {
   let job;
   try { [job] = await Promise.all([api(`/api/intake/${id}?compact=1`), libraryTypes.length ? Promise.resolve() : loadLibraryMeta()]); } catch (e) { if (screen.epoch === flowEpoch) flowError(screen.body, e); return; }
   if (screen.epoch !== flowEpoch) return;
-  if(flow.job?.id!==job.id){delete flow.customTitle;delete flow.personalAttributes;}
+  if(flow.job?.id!==job.id){delete flow.customTitle;delete flow.personalAttributes;delete flow.primaryPhotoID;}
  flow.job = job; flow.kind = job.category; flow.profile=libraryTypes.find(p=>p.id===job.input?.template_id)||libraryTypes.find(p=>p.name===job.category); flow.cards = []; flow.selected = [];
  document.querySelector('.library-heading h1').textContent=job.item_id?'Find item details':'Add to your collection';
   if (job.state === 'approved') return savedStep(job);
@@ -352,7 +354,7 @@ function saveStep(job) {
       // This click explicitly confirms the concrete selection shown on this step.
       const pending = (await api('/api/proposals?limit=100')).proposals || [];
       for (const p of pending.filter(p => p.type === 'identification_link' && p.proposed_payload.job_id === job.id)) await api(`/api/proposals/${p.id}/decision`, { method: 'POST', body: JSON.stringify({ approve: false, reason: 'Superseded by the reviewed selection.' }) });
-      const payload = { replace_existing: !!replaceMatch?.checked, confirm_alternative:flow.selected.some(index=>job.result.matches[index].confidence==='rejected'), selected: flow.selected, title: title.value, tags: intakeTags(job, consoleReview?.value()), attributes: { ...(flow.personalAttributes || {}), ...(title.value ? { title: title.value } : {}) } };
+      const payload = { primary_photo_id: flow.primaryPhotoID || (!job.item_id ? job.photos?.[0]?.id : undefined), replace_existing: !!replaceMatch?.checked, confirm_alternative:flow.selected.some(index=>job.result.matches[index].confidence==='rejected'), selected: flow.selected, title: title.value, tags: intakeTags(job, consoleReview?.value()), attributes: { ...(flow.personalAttributes || {}), ...(title.value ? { title: title.value } : {}) } };
       const proposal = await api(`/api/intake/${job.id}/proposal`, { method: 'POST', body: JSON.stringify(payload) });
       await api(`/api/proposals/${proposal.id}/decision`, { method: 'POST', body: JSON.stringify({ approve: true }) });
       await loadLibraryMeta(); const saved = await api(`/api/intake/${job.id}?compact=1`); flow.savedTitle=job.item_id?job.input.text.split('\n')[0]:title.value; savedStep(saved);

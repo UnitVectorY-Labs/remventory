@@ -83,5 +83,8 @@ there is no approved catalogue link. An identified work does not imply that its
 physical edition or pressing has been confirmed.
 
 All uploaded views remain available from the photo selector during review. The
+selected photo becomes the primary picture when you confirm saving. In the
+collection, select a thumbnail to switch photos and click the displayed photo to
+view it full size. The
 item detail shows a short **Your copy** section for stored format, condition and
 location, with other personal fields under the expandable notes section.

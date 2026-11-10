@@ -344,6 +344,7 @@ func (s *Store) ReplaceIdentificationResult(ctx context.Context, id string, resu
 }
 
 type IdentificationProposal struct {
+	PrimaryPhotoID        string          `json:"primary_photo_id,omitempty"`
 	ReplaceExisting       bool            `json:"replace_existing,omitempty"`
 	ExistingLinksSnapshot string          `json:"existing_links_snapshot,omitempty"`
 	ConfirmAlternative    bool            `json:"confirm_alternative,omitempty"`
@@ -366,6 +367,11 @@ func (s *Store) ProposeIdentification(ctx context.Context, p IdentificationPropo
 	}
 	if err = validSelection(j, p.Selected, p.ConfirmAlternative); err != nil {
 		return Proposal{}, err
+	}
+	if p.PrimaryPhotoID != "" {
+		if _, err = s.IdentificationPhoto(ctx, j.ID, p.PrimaryPhotoID); err != nil {
+			return Proposal{}, fmt.Errorf("primary photo must belong to this identification: %w", err)
+		}
 	}
 	p.ItemID = j.ItemID
 	if p.ReplaceExisting {
@@ -442,6 +448,15 @@ func applyIdentification(ctx context.Context, tx pgx.Tx, proposal *Proposal) err
 	if err = validSelection(j, p.Selected, p.ConfirmAlternative); err != nil {
 		return err
 	}
+	if p.PrimaryPhotoID != "" {
+		var exists bool
+		if err = tx.QueryRow(ctx, `select exists(select 1 from (`+identificationPhotosSQL+`) photos where id::text=$2)`, j.ID, p.PrimaryPhotoID).Scan(&exists); err != nil {
+			return err
+		}
+		if !exists {
+			return fmt.Errorf("primary photo must belong to this identification")
+		}
+	}
 	itemID := j.ItemID
 	if itemID == "" {
 		fields, err := readFields(ctx, tx)
@@ -459,7 +474,7 @@ func applyIdentification(ctx context.Context, tx pgx.Tx, proposal *Proposal) err
 			return err
 		}
 		// Photo attachment and primary choice are part of the same explicit approval.
-		_, err = tx.Exec(ctx, `insert into item_assets(id,item_id,object_key,thumbnail_object_key,mime_type,original_filename,width,height,size_bytes,is_primary) select id,$2,object_key,thumbnail_key,mime_type,filename,width,height,size_bytes,id=(select id from identification_photos where job_id=$1 order by id limit 1) from identification_photos where job_id=$1`, j.ID, itemID)
+		_, err = tx.Exec(ctx, `insert into item_assets(id,item_id,object_key,thumbnail_object_key,mime_type,original_filename,width,height,size_bytes,is_primary) select id,$2,object_key,thumbnail_key,mime_type,filename,width,height,size_bytes,id=coalesce(nullif($3,'')::uuid,(select id from identification_photos where job_id=$1 order by id limit 1)) from identification_photos where job_id=$1`, j.ID, itemID, p.PrimaryPhotoID)
 		if err != nil {
 			return err
 		}
@@ -469,6 +484,19 @@ func applyIdentification(ctx context.Context, tx pgx.Tx, proposal *Proposal) err
 		var locked string
 		if err = tx.QueryRow(ctx, `select id::text from items where id=$1 for update`, itemID).Scan(&locked); err != nil {
 			return err
+		}
+	}
+	if j.ItemID != "" && p.PrimaryPhotoID != "" {
+		// Clear first to respect the one-primary-photo constraint.
+		if _, err = tx.Exec(ctx, `update item_assets set is_primary=false where item_id=$1 and is_primary`, itemID); err != nil {
+			return err
+		}
+		updated, err := tx.Exec(ctx, `update item_assets set is_primary=true where item_id=$1 and id::text=$2`, itemID, p.PrimaryPhotoID)
+		if err != nil {
+			return err
+		}
+		if updated.RowsAffected() != 1 {
+			return fmt.Errorf("primary photo must belong to this item")
 		}
 	}
 	if p.ReplaceExisting {

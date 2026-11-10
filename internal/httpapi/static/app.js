@@ -220,6 +220,8 @@ function proposalCard(proposal, title) {
   if (payload.default_values) card.append(attributeValueTable(payload.default_values,"Starting values"));
   if (payload.primary_image_id) { const preview = document.createElement("img"); preview.className="proposal-picture"; preview.src=`/api/images/${encodeURIComponent(payload.primary_image_id)}/thumbnail?v=2`; preview.alt="Proposed primary picture"; card.append(preview); }
 
+  if (payload.primary_photo_id && payload.job_id) { const preview = document.createElement("img"); preview.className="proposal-picture"; preview.src=`/api/intake/${encodeURIComponent(payload.job_id)}/photos/${encodeURIComponent(payload.primary_photo_id)}/thumbnail`; preview.alt="Proposed primary picture"; card.append(preview); }
+
   appendDetail(details, "Quantity change", payload.quantity_delta ? signed(payload.quantity_delta) : "");
   card.append(details);
 
