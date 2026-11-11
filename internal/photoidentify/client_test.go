@@ -2,7 +2,8 @@ package photoidentify
 
 import (
 	"context"
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -18,11 +19,11 @@ func TestPhotoSuggestionsAreStructuredAndProviderIndependent(t *testing.T) {
 			t.Error("wrong endpoint or credentials")
 		}
 		var payload map[string]any
-		json.NewDecoder(r.Body).Decode(&payload)
+		json.UnmarshalRead(r.Body, &payload)
 		if payload["model"] != "my-vision-model" {
 			t.Error("vision model not selected")
 		}
-		json.NewEncoder(w).Encode(map[string]any{"choices": []any{map[string]any{"message": map[string]string{"content": "```json\n{\"title\":\"Likely Wii\",\"category_id\":\"invented-id\",\"tags\":[\"Consoles\",\"Wii\"],\"attributes\":{\"year\":2006,\"reference\":\"https://en.wikipedia.org/wiki/Wii\"},\"notes\":\"Year inferred; verify model label.\"}\n```"}}}})
+		json.MarshalWrite(w, map[string]any{"choices": []any{map[string]any{"message": map[string]string{"content": "```json\n{\"title\":\"Likely Wii\",\"category_id\":\"invented-id\",\"tags\":[\"Consoles\",\"Wii\"],\"attributes\":{\"year\":2006,\"reference\":\"https://en.wikipedia.org/wiki/Wii\"},\"notes\":\"Year inferred; verify model label.\"}\n```"}}}})
 	}))
 	defer server.Close()
 	cfg := config.Config{VisionBaseURL: server.URL + "/v1", VisionModel: "my-vision-model", VisionAPIKey: "test-key"}
@@ -36,14 +37,14 @@ func TestPhotoSuggestionsAreStructuredAndProviderIndependent(t *testing.T) {
 }
 
 func TestPhotoIdentificationIncludesSelectedTemplate(t *testing.T) {
-	template := store.Category{ID: "selected-template", Name: "Nintendo Switch games", Description: "Read the game cover and identify the edition", DefaultTags: []string{"Switch"}, DefaultValues: json.RawMessage(`{"platform":"Nintendo Switch"}`), Attributes: []store.Attribute{{Key: "title", Label: "Title", DataType: "text"}}}
+	template := store.Category{ID: "selected-template", Name: "Nintendo Switch games", Description: "Read the game cover and identify the edition", DefaultTags: []string{"Switch"}, DefaultValues: jsontext.Value(`{"platform":"Nintendo Switch"}`), Attributes: []store.Attribute{{Key: "title", Label: "Title", DataType: "text"}}}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var payload struct {
 			Messages []struct {
-				Content json.RawMessage `json:"content"`
+				Content jsontext.Value `json:"content"`
 			} `json:"messages"`
 		}
-		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+		if err := json.UnmarshalRead(r.Body, &payload); err != nil {
 			t.Error(err)
 			return
 		}

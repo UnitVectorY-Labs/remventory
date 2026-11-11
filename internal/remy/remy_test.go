@@ -3,7 +3,8 @@ package remy
 import (
 	"bytes"
 	"context"
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"io"
 	"net/http"
 	"strings"
@@ -18,11 +19,11 @@ func TestPlanRequestUsesModelStructuredOutput(t *testing.T) {
 	var requestBody map[string]any
 	service := New(config.Config{OpenAIBaseURL: "http://model.test/v1", MainModel: "main-model"}, nil)
 	service.client = &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
-		if err := json.NewDecoder(r.Body).Decode(&requestBody); err != nil {
+		if err := json.UnmarshalRead(r.Body, &requestBody); err != nil {
 			t.Fatal(err)
 		}
 		var body bytes.Buffer
-		_ = json.NewEncoder(&body).Encode(map[string]any{
+		_ = json.MarshalWrite(&body, map[string]any{
 			"choices": []any{map[string]any{
 				"message": map[string]any{"content": `{"action":"item_change"}`},
 			}},
@@ -86,9 +87,9 @@ func TestPlanRequestRejectsContextActionWithoutVisibleContent(t *testing.T) {
 
 func TestItemAttributesOnlyUseCategoryDefinition(t *testing.T) {
 	attributes, err := itemAttributesForCategory(
-		json.RawMessage(`{"condition":"used","made_up":"value"}`),
+		jsontext.Value(`{"condition":"used","made_up":"value"}`),
 		store.Category{Attributes: []store.Attribute{{Key: "condition"}, {Key: "platform"}}},
-		json.RawMessage(`{"platform":"Switch","legacy":"remove me"}`),
+		jsontext.Value(`{"platform":"Switch","legacy":"remove me"}`),
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -215,7 +216,7 @@ func TestDialogUsesMainModelWithStrictSchemaAndHardLimit(t *testing.T) {
 	var requestBody map[string]any
 	service := New(config.Config{OpenAIBaseURL: "http://model.test/v1", MainModel: "main-model"}, nil)
 	service.client = &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
-		_ = json.NewDecoder(r.Body).Decode(&requestBody)
+		_ = json.UnmarshalRead(r.Body, &requestBody)
 		return jsonCompletionResponse(`{"icon":"searching","message":"` + strings.Repeat("a", 160) + `"}`), nil
 	})}
 
@@ -317,7 +318,7 @@ func TestThinkingModelHandlesInventoryMatch(t *testing.T) {
 	service := New(config.Config{OpenAIBaseURL: "http://model.test/v1", ThinkingModel: "thinking-model"}, nil)
 	service.client = &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
 		var request map[string]any
-		_ = json.NewDecoder(r.Body).Decode(&request)
+		_ = json.UnmarshalRead(r.Body, &request)
 		usedModel, _ = request["model"].(string)
 		return jsonCompletionResponse(`{"judgment":"yes","confidence":"high","summary":"Found it","matched_item_ids":["item-id"]}`), nil
 	})}
@@ -333,7 +334,7 @@ func TestThinkingModelHandlesInventoryMatch(t *testing.T) {
 
 func jsonCompletionResponse(content string) *http.Response {
 	var body bytes.Buffer
-	_ = json.NewEncoder(&body).Encode(map[string]any{
+	_ = json.MarshalWrite(&body, map[string]any{
 		"choices": []any{map[string]any{"message": map[string]any{"content": content}}},
 	})
 	return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(&body)}
@@ -343,7 +344,7 @@ func jsonResponseClient(t *testing.T, content string) *http.Client {
 	t.Helper()
 	return &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
 		var body bytes.Buffer
-		_ = json.NewEncoder(&body).Encode(map[string]any{
+		_ = json.MarshalWrite(&body, map[string]any{
 			"choices": []any{map[string]any{
 				"message": map[string]any{"content": content},
 			}},

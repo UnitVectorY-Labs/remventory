@@ -2,7 +2,8 @@ package store
 
 import (
 	"context"
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"github.com/UnitVectorY-Labs/remventory/internal/authority"
 	"testing"
 	"time"
@@ -69,7 +70,7 @@ func TestRuntimeTypePolicySnapshotsAndDefaults(t *testing.T) {
 	s := canonicalTestStore(t)
 	ctx := context.Background()
 	policy := IntakeConfig{Providers: []string{"wikidata"}, Prompt: "Use the title visible on the spine", DisplayFields: map[string][]string{"wikidata": {"original_dates"}}}
-	proposal, err := s.CreateCategoryProposal(ctx, CategoryProposalPayload{Name: "LaserDisc", DefaultTags: []string{"LaserDisc"}, DefaultValues: json.RawMessage(`{"format":"LaserDisc"}`), IntakeConfig: &policy, Attributes: []AttributeDraft{{Key: "format"}}})
+	proposal, err := s.CreateCategoryProposal(ctx, CategoryProposalPayload{Name: "LaserDisc", DefaultTags: []string{"LaserDisc"}, DefaultValues: jsontext.Value(`{"format":"LaserDisc"}`), IntakeConfig: &policy, Attributes: []AttributeDraft{{Key: "format"}}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -93,7 +94,7 @@ func TestRuntimeTypePolicySnapshotsAndDefaults(t *testing.T) {
 	if j.Category != "LaserDisc" || j.Input.Policy == nil || j.Input.Policy.Allows("musicbrainz") || !j.Input.Policy.Allows("wikidata") {
 		t.Fatal("job did not use runtime policy", j)
 	}
-	edit, err := s.CreateCategoryProposal(ctx, CategoryProposalPayload{Operation: "update", CategoryID: profile.ID, DefaultValues: json.RawMessage(`{"format":"Changed"}`), DefaultTags: []string{"Changed"}, IntakeConfig: &IntakeConfig{Providers: []string{}, Prompt: "Changed"}})
+	edit, err := s.CreateCategoryProposal(ctx, CategoryProposalPayload{Operation: "update", CategoryID: profile.ID, DefaultValues: jsontext.Value(`{"format":"Changed"}`), DefaultTags: []string{"Changed"}, IntakeConfig: &IntakeConfig{Providers: []string{}, Prompt: "Changed"}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -108,7 +109,7 @@ func TestRuntimeTypePolicySnapshotsAndDefaults(t *testing.T) {
 	if err = s.FinishIdentification(ctx, claimed, IdentificationResult{Title: "Owner copy"}, nil); err != nil {
 		t.Fatal(err)
 	}
-	p, err := s.ProposeIdentification(ctx, IdentificationProposal{JobID: j.ID, Title: "Owner copy", Attributes: json.RawMessage(`{"title":"Owner copy"}`)})
+	p, err := s.ProposeIdentification(ctx, IdentificationProposal{JobID: j.ID, Title: "Owner copy", Attributes: jsontext.Value(`{"title":"Owner copy"}`)})
 	if err != nil {
 		t.Fatal(err)
 	}

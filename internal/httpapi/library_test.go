@@ -3,7 +3,8 @@ package httpapi
 import (
 	"bytes"
 	"context"
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"fmt"
 	"image"
 	"image/png"
@@ -268,10 +269,10 @@ func TestLibraryApprovalAndPhotos(t *testing.T) {
 		visionCalls.Add(1)
 		var request struct {
 			Messages []struct {
-				Content json.RawMessage `json:"content"`
+				Content jsontext.Value `json:"content"`
 			} `json:"messages"`
 		}
-		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+		if err := json.UnmarshalRead(r.Body, &request); err != nil {
 			t.Error(err)
 			return
 		}
@@ -345,7 +346,7 @@ func TestLibraryApprovalAndPhotos(t *testing.T) {
 	var modelStep atomic.Int32
 	modelServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var request map[string]any
-		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+		if err := json.UnmarshalRead(r.Body, &request); err != nil {
 			t.Error(err)
 			return
 		}
@@ -371,7 +372,7 @@ func TestLibraryApprovalAndPhotos(t *testing.T) {
 		if message["tool_calls"] != nil {
 			reason = "tool_calls"
 		}
-		json.NewEncoder(w).Encode(map[string]any{"choices": []any{map[string]any{"message": message, "finish_reason": reason}}})
+		json.MarshalWrite(w, map[string]any{"choices": []any{map[string]any{"message": message, "finish_reason": reason}}})
 	}))
 	defer modelServer.Close()
 	aiConfig := config.Config{MainModel: "test-model", OpenAIBaseURL: modelServer.URL}

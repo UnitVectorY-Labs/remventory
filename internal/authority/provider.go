@@ -3,7 +3,8 @@ package authority
 
 import (
 	"context"
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"fmt"
 	"io"
 	"net/http"
@@ -23,13 +24,13 @@ func (r Ref) Key() string { return r.Provider + ":" + r.Kind + ":" + r.ID }
 
 type Entity struct {
 	Ref
-	Label       string          `json:"label"`
-	URI         string          `json:"uri"`
-	Description string          `json:"description,omitempty"`
-	Fields      map[string]any  `json:"fields"`
-	Raw         json.RawMessage `json:"raw,omitempty"`
-	License     string          `json:"license"`
-	RetrievedAt time.Time       `json:"retrieved_at"`
+	Label       string         `json:"label"`
+	URI         string         `json:"uri"`
+	Description string         `json:"description,omitempty"`
+	Fields      map[string]any `json:"fields"`
+	Raw         jsontext.Value `json:"raw,omitempty"`
+	License     string         `json:"license"`
+	RetrievedAt time.Time      `json:"retrieved_at"`
 }
 type Edge struct {
 	From     Ref    `json:"from"`
@@ -153,14 +154,14 @@ func (c *Client) Get(ctx context.Context, provider, url string, dest any) error 
 			res.Body.Close()
 			return fmt.Errorf("%s returned HTTP %d", provider, res.StatusCode)
 		}
-		var raw json.RawMessage
-		err = json.NewDecoder(io.LimitReader(res.Body, 16<<20)).Decode(&raw)
+		var raw jsontext.Value
+		err = json.UnmarshalRead(io.LimitReader(res.Body, 16<<20), &raw)
 		res.Body.Close()
 		if err != nil {
 			return fmt.Errorf("%s response: %w", provider, err)
 		}
 		var apiError struct {
-			Error json.RawMessage `json:"error"`
+			Error jsontext.Value `json:"error"`
 		}
 		_ = json.Unmarshal(raw, &apiError)
 		if len(apiError.Error) > 0 && string(apiError.Error) != "null" {
