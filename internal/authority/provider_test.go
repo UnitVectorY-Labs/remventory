@@ -2,7 +2,8 @@ package authority
 
 import (
 	"context"
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -13,7 +14,7 @@ import (
 )
 
 func TestMusicReleaseLayers(t *testing.T) {
-	raw := json.RawMessage(`{"id":"11111111-1111-4111-8111-111111111111","title":"Album pressing","date":"2015","barcode":"123","release-group":{"id":"22222222-2222-4222-8222-222222222222","title":"Album","first-release-date":"1999"},"artist-credit":[{"artist":{"id":"33333333-3333-4333-8333-333333333333","name":"Artist"}}],"media":[{"format":"12\" Vinyl","tracks":[{"position":1,"recording":{"id":"44444444-4444-4444-8444-444444444444","title":"Recording","relations":[{"type":"performance","work":{"id":"55555555-5555-4555-8555-555555555555","title":"Composition"}}]}}]}]}`)
+	raw := jsontext.Value(`{"id":"11111111-1111-4111-8111-111111111111","title":"Album pressing","date":"2015","barcode":"123","release-group":{"id":"22222222-2222-4222-8222-222222222222","title":"Album","first-release-date":"1999"},"artist-credit":[{"artist":{"id":"33333333-3333-4333-8333-333333333333","name":"Artist"}}],"media":[{"format":"12\" Vinyl","tracks":[{"position":1,"recording":{"id":"44444444-4444-4444-8444-444444444444","title":"Recording","relations":[{"type":"performance","work":{"id":"55555555-5555-4555-8555-555555555555","title":"Composition"}}]}}]}]}`)
 	g, err := normalizeMB(raw)
 	if err != nil {
 		t.Fatal(err)
@@ -132,7 +133,7 @@ func TestWikidataBatchesAnonymousEntityReads(t *testing.T) {
 		for _, id := range ids {
 			entities[id] = map[string]any{"id": id}
 		}
-		json.NewEncoder(w).Encode(map[string]any{"entities": entities})
+		json.MarshalWrite(w, map[string]any{"entities": entities})
 	}))
 	defer srv.Close()
 	p := Wikidata{BaseURL: srv.URL, HTTP: NewClient()}

@@ -2,7 +2,8 @@ package remy
 
 import (
 	"context"
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"strings"
@@ -153,6 +154,6 @@ func (s *Service) ProposeCategoryChange(ctx context.Context, payload store.Categ
 	return s.store.CreateCategoryProposal(ctx, payload)
 }
 
-func (s *Service) RevisePendingProposal(ctx context.Context, id string, payload json.RawMessage) (store.Proposal, error) {
+func (s *Service) RevisePendingProposal(ctx context.Context, id string, payload jsontext.Value) (store.Proposal, error) {
 	return s.store.RevisePendingProposal(ctx, id, payload)
 }

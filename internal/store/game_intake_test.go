@@ -2,7 +2,8 @@ package store
 
 import (
 	"context"
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"github.com/UnitVectorY-Labs/remventory/internal/authority"
 	"strings"
 	"testing"
@@ -12,14 +13,14 @@ import (
 func TestGameIntakeRequiresOwnedConsole(t *testing.T) {
 	job := IdentificationJob{Input: IdentificationInput{FieldKeys: []string{"title", "console"}}}
 	for _, raw := range []string{`{}`, `{"console":""}`, `{"console":["PS5","Nintendo Switch"]}`} {
-		if validateIdentificationConsole(job, json.RawMessage(raw)) == nil {
+		if validateIdentificationConsole(job, jsontext.Value(raw)) == nil {
 			t.Errorf("accepted missing or ambiguous console: %s", raw)
 		}
 	}
-	if err := validateIdentificationConsole(job, json.RawMessage(`{"console":"Nintendo Switch 2"}`)); err != nil {
+	if err := validateIdentificationConsole(job, jsontext.Value(`{"console":"Nintendo Switch 2"}`)); err != nil {
 		t.Fatal(err)
 	}
-	if err := validateIdentificationConsole(IdentificationJob{}, json.RawMessage(`{}`)); err != nil {
+	if err := validateIdentificationConsole(IdentificationJob{}, jsontext.Value(`{}`)); err != nil {
 		t.Fatal("unrelated intake must remain optional")
 	}
 }
@@ -27,7 +28,7 @@ func TestGameIntakeRequiresOwnedConsole(t *testing.T) {
 func TestExtendEnumRequiresApprovalAndPreservesChoices(t *testing.T) {
 	s := canonicalTestStore(t)
 	ctx := context.Background()
-	p, err := s.CreateGraphProposal(ctx, GraphProposalPayload{Operation: "define_field", Key: "console", Label: "Console", DataType: "enum", Config: json.RawMessage(`{"options":["PS5"]}`)})
+	p, err := s.CreateGraphProposal(ctx, GraphProposalPayload{Operation: "define_field", Key: "console", Label: "Console", DataType: "enum", Config: jsontext.Value(`{"options":["PS5"]}`)})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -36,7 +37,7 @@ func TestExtendEnumRequiresApprovalAndPreservesChoices(t *testing.T) {
 	}
 	var pending []Proposal
 	for _, option := range []string{"Nintendo Switch", "Nintendo Switch 2"} {
-		p, err = s.CreateGraphProposal(ctx, GraphProposalPayload{Operation: "extend_enum", Key: "console", Config: json.RawMessage(`{"options":["` + option + `"]}`)})
+		p, err = s.CreateGraphProposal(ctx, GraphProposalPayload{Operation: "extend_enum", Key: "console", Config: jsontext.Value(`{"options":["` + option + `"]}`)})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -91,15 +92,15 @@ func TestBlankCachedTitleNeedsRefresh(t *testing.T) {
 
 func TestConfirmedGameTagsRepairLegacyDefaults(t *testing.T) {
 	job := IdentificationJob{Input: IdentificationInput{FieldKeys: []string{"console"}}}
-	got := identificationTags(job, []string{"Games", "Consoles", " Games ", "consoles", "PS3", "ps3", "Favorites"}, json.RawMessage(`{"console":"PS3"}`))
+	got := identificationTags(job, []string{"Games", "Consoles", " Games ", "consoles", "PS3", "ps3", "Favorites"}, jsontext.Value(`{"console":"PS3"}`))
 	if strings.Join(got, ",") != "Games,PS3,Favorites" {
 		t.Fatalf("tags: %v", got)
 	}
-	got = identificationTags(job, []string{"Games", "Consoles", "Games"}, json.RawMessage(`{"console":"Nintendo Switch 2"}`))
+	got = identificationTags(job, []string{"Games", "Consoles", "Games"}, jsontext.Value(`{"console":"Nintendo Switch 2"}`))
 	if strings.Join(got, ",") != "Games,Nintendo Switch 2" {
 		t.Fatalf("tags: %v", got)
 	}
-	got = identificationTags(IdentificationJob{}, []string{"Consoles", "Hardware"}, json.RawMessage(`{}`))
+	got = identificationTags(IdentificationJob{}, []string{"Consoles", "Hardware"}, jsontext.Value(`{}`))
 	if strings.Join(got, ",") != "Consoles,Hardware" {
 		t.Fatalf("unrelated tags changed: %v", got)
 	}
@@ -108,21 +109,21 @@ func TestConfirmedGameTagsRepairLegacyDefaults(t *testing.T) {
 func TestLegacyPendingGameGetsConsoleTagOnlyOnApproval(t *testing.T) {
 	s := canonicalTestStore(t)
 	ctx := context.Background()
-	p, err := s.CreateGraphProposal(ctx, GraphProposalPayload{Operation: "define_field", Key: "console", Label: "Console", DataType: "enum", Config: json.RawMessage(`{"options":["PS3"]}`)})
+	p, err := s.CreateGraphProposal(ctx, GraphProposalPayload{Operation: "define_field", Key: "console", Label: "Console", DataType: "enum", Config: jsontext.Value(`{"options":["PS3"]}`)})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if _, err = s.DecideProposal(ctx, p.ID, ProposalDecision{Approve: true}); err != nil {
 		t.Fatal(err)
 	}
-	job, err := s.CreateIdentification(ctx, "Video Game", "", IdentificationInput{Policy: &IntakeConfig{Providers: []string{"wikidata"}}, FieldKeys: []string{"title", "console"}, DefaultTags: []string{"Games", "Consoles"}, DefaultValues: json.RawMessage(`{}`)}, nil)
+	job, err := s.CreateIdentification(ctx, "Video Game", "", IdentificationInput{Policy: &IntakeConfig{Providers: []string{"wikidata"}}, FieldKeys: []string{"title", "console"}, DefaultTags: []string{"Games", "Consoles"}, DefaultValues: jsontext.Value(`{}`)}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if _, err = s.pool.Exec(ctx, `update identification_jobs set state='review' where id=$1`, job.ID); err != nil {
 		t.Fatal(err)
 	}
-	p, err = s.ProposeIdentification(ctx, IdentificationProposal{JobID: job.ID, Title: "Skyrim — Legendary Edition", Tags: []string{"Games", "Consoles"}, Attributes: json.RawMessage(`{"title":"Skyrim — Legendary Edition","console":"PS3"}`)})
+	p, err = s.ProposeIdentification(ctx, IdentificationProposal{JobID: job.ID, Title: "Skyrim — Legendary Edition", Tags: []string{"Games", "Consoles"}, Attributes: jsontext.Value(`{"title":"Skyrim — Legendary Edition","console":"PS3"}`)})
 	if err != nil {
 		t.Fatal(err)
 	}

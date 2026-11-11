@@ -5,7 +5,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/base64"
-	"encoding/json"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"github.com/UnitVectorY-Labs/remventory/internal/authority"
@@ -355,7 +355,7 @@ func (s *Service) complete(ctx context.Context, messages []message, definitions 
 			Message message `json:"message"`
 		} `json:"choices"`
 	}
-	if err = json.NewDecoder(io.LimitReader(res.Body, 4<<20)).Decode(&response); err != nil {
+	if err = json.UnmarshalRead(io.LimitReader(res.Body, 4<<20), &response); err != nil {
 		return message{}, err
 	}
 	if len(response.Choices) == 0 {
