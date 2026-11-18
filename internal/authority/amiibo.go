@@ -2,7 +2,8 @@ package authority
 
 import (
 	"context"
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"fmt"
 	"net/url"
 	"regexp"
@@ -93,7 +94,7 @@ type amiiboResponse struct{ Amiibo []amiiboRecord }
 
 func (r *amiiboResponse) UnmarshalJSON(b []byte) error {
 	var wire struct {
-		Amiibo json.RawMessage `json:"amiibo"`
+		Amiibo jsontext.Value `json:"amiibo"`
 	}
 	if err := json.Unmarshal(b, &wire); err != nil {
 		return err

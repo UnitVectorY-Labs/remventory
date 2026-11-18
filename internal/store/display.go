@@ -2,7 +2,7 @@ package store
 
 import (
 	"context"
-	"encoding/json"
+	"encoding/json/v2"
 	"errors"
 	"github.com/UnitVectorY-Labs/remventory/internal/authority"
 	"github.com/jackc/pgx/v5"

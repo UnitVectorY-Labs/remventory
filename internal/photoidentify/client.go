@@ -5,7 +5,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/base64"
-	"encoding/json"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"io"
@@ -76,7 +76,7 @@ func Identify(ctx context.Context, cfg config.Config, picture []byte, categories
 			} `json:"message"`
 		} `json:"choices"`
 	}
-	if err := json.NewDecoder(io.LimitReader(response.Body, 1<<20)).Decode(&result); err != nil {
+	if err := json.UnmarshalRead(io.LimitReader(response.Body, 1<<20), &result); err != nil {
 		return Suggestion{}, errors.New("photo model returned an unreadable response")
 	}
 	if len(result.Choices) == 0 {

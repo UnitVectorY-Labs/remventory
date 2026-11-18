@@ -2,7 +2,7 @@ package mcpserver
 
 import (
 	"context"
-	"encoding/json"
+	"encoding/json/v2"
 
 	"github.com/UnitVectorY-Labs/remventory/internal/intake"
 	"github.com/UnitVectorY-Labs/remventory/internal/remy"

@@ -2,7 +2,8 @@ package authority
 
 import (
 	"context"
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"fmt"
 	"github.com/google/uuid"
 	"net/url"
@@ -131,14 +132,14 @@ func (p *MusicBrainz) Resolve(ctx context.Context, ref Ref) (Graph, error) {
 	if _, err := uuid.Parse(ref.ID); err != nil {
 		return Graph{}, fmt.Errorf("invalid MBID")
 	}
-	var raw json.RawMessage
+	var raw jsontext.Value
 	err := p.HTTP.Get(ctx, "musicbrainz", p.base()+"/release/"+ref.ID+"?fmt=json&inc=artists+release-groups+recordings+artist-credits+labels+recording-level-rels+work-rels", &raw)
 	if err != nil {
 		return Graph{}, err
 	}
 	return normalizeMB(raw)
 }
-func normalizeMB(raw json.RawMessage) (Graph, error) {
+func normalizeMB(raw jsontext.Value) (Graph, error) {
 	var r mbRelease
 	if err := json.Unmarshal(raw, &r); err != nil {
 		return Graph{}, err

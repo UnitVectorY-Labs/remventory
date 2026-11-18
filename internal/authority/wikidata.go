@@ -2,7 +2,8 @@ package authority
 
 import (
 	"context"
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"fmt"
 	"net/url"
 	"regexp"
@@ -69,7 +70,7 @@ type wdClaim struct {
 	Mainsnak struct {
 		DataType  string `json:"datatype"`
 		DataValue struct {
-			Value json.RawMessage `json:"value"`
+			Value jsontext.Value `json:"value"`
 		} `json:"datavalue"`
 	} `json:"mainsnak"`
 }

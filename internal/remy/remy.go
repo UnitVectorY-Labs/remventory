@@ -4,7 +4,8 @@ import (
 	"bytes"
 	"context"
 	"embed"
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"net/http"
@@ -78,12 +79,12 @@ type categoryDraft struct {
 }
 
 type itemDraft struct {
-	Operation     string          `json:"operation"`
-	CategoryName  string          `json:"category_name"`
-	Title         string          `json:"title"`
-	Attributes    json.RawMessage `json:"attributes"`
-	Quantity      int             `json:"quantity"`
-	QuantityDelta int             `json:"quantity_delta"`
+	Operation     string         `json:"operation"`
+	CategoryName  string         `json:"category_name"`
+	Title         string         `json:"title"`
+	Attributes    jsontext.Value `json:"attributes"`
+	Quantity      int            `json:"quantity"`
+	QuantityDelta int            `json:"quantity_delta"`
 }
 
 type QueryResult struct {
@@ -117,9 +118,9 @@ type queryCategorySelection struct {
 }
 
 type proposalRevision struct {
-	ProposalID      string          `json:"proposal_id"`
-	Summary         string          `json:"summary"`
-	ProposedPayload json.RawMessage `json:"proposed_payload"`
+	ProposalID      string         `json:"proposal_id"`
+	Summary         string         `json:"summary"`
+	ProposedPayload jsontext.Value `json:"proposed_payload"`
 }
 
 type contextualAnswer struct {
@@ -783,7 +784,7 @@ Choose category_name from the provided category list. Set title to the item name
 Categories: `+string(categoryBytes), message, &draft)
 		if err == nil && draft.Title != "" {
 			if len(draft.Attributes) == 0 {
-				draft.Attributes = json.RawMessage(`{}`)
+				draft.Attributes = jsontext.Value(`{}`)
 			}
 			if draft.Operation == "" {
 				draft.Operation = "create"
@@ -799,7 +800,7 @@ Categories: `+string(categoryBytes), message, &draft)
 		Operation:    "create",
 		CategoryName: "",
 		Title:        fallbackItemTitle(message),
-		Attributes:   json.RawMessage(`{}`),
+		Attributes:   jsontext.Value(`{}`),
 		Quantity:     1,
 	}, nil
 }
@@ -944,7 +945,7 @@ func (s *Service) completeJSONWithFormat(ctx context.Context, model, system, use
 			} `json:"message"`
 		} `json:"choices"`
 	}
-	if err := json.NewDecoder(resp.Body).Decode(&parsed); err != nil {
+	if err := json.UnmarshalRead(resp.Body, &parsed); err != nil {
 		return err
 	}
 	if len(parsed.Choices) == 0 {
@@ -1064,7 +1065,7 @@ func normalizeAttributes(attributes []store.AttributeDraft) {
 			attributes[i].DataType = "text"
 		}
 		if len(attributes[i].Config) == 0 {
-			attributes[i].Config = json.RawMessage(`{}`)
+			attributes[i].Config = jsontext.Value(`{}`)
 		}
 	}
 }
@@ -1178,7 +1179,7 @@ func itemTitleForCategory(title string, category store.Category) string {
 	return title
 }
 
-func itemAttributesForCategory(raw json.RawMessage, category store.Category, existing json.RawMessage) (json.RawMessage, error) {
+func itemAttributesForCategory(raw jsontext.Value, category store.Category, existing jsontext.Value) (jsontext.Value, error) {
 	values := map[string]any{}
 	if len(existing) > 0 && string(existing) != "null" {
 		if err := json.Unmarshal(existing, &values); err != nil {

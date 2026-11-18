@@ -2,7 +2,8 @@ package store
 
 import (
 	"context"
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"regexp"
@@ -12,10 +13,10 @@ import (
 )
 
 type FieldDefinition struct {
-	Key      string          `json:"key" db:"key"`
-	Label    string          `json:"label" db:"label"`
-	DataType string          `json:"data_type" db:"data_type"`
-	Config   json.RawMessage `json:"config" db:"config"`
+	Key      string         `json:"key" db:"key"`
+	Label    string         `json:"label" db:"label"`
+	DataType string         `json:"data_type" db:"data_type"`
+	Config   jsontext.Value `json:"config" db:"config"`
 }
 type GraphVocabulary struct {
 	Fields    []FieldDefinition   `json:"fields"`
@@ -23,13 +24,13 @@ type GraphVocabulary struct {
 	Templates []Category          `json:"templates"`
 }
 type GraphProposalPayload struct {
-	Operation string          `json:"operation"`
-	Key       string          `json:"key,omitempty"`
-	Label     string          `json:"label,omitempty"`
-	DataType  string          `json:"data_type,omitempty"`
-	Config    json.RawMessage `json:"config,omitempty"`
-	Tag       string          `json:"tag,omitempty"`
-	FieldKeys []string        `json:"field_keys,omitempty"`
+	Operation string         `json:"operation"`
+	Key       string         `json:"key,omitempty"`
+	Label     string         `json:"label,omitempty"`
+	DataType  string         `json:"data_type,omitempty"`
+	Config    jsontext.Value `json:"config,omitempty"`
+	Tag       string         `json:"tag,omitempty"`
+	FieldKeys []string       `json:"field_keys,omitempty"`
 }
 
 type fieldQuerier interface {
@@ -100,9 +101,9 @@ func validateGraphPayload(p *GraphProposalPayload) error {
 			return errors.New("field type must be text, number, boolean, date, links, or enum")
 		}
 		if len(p.Config) == 0 {
-			p.Config = json.RawMessage(`{}`)
+			p.Config = jsontext.Value(`{}`)
 		}
-		if !json.Valid(p.Config) {
+		if !jsontext.Value(p.Config).IsValid() {
 			return errors.New("field configuration must be JSON")
 		}
 		if p.DataType == "enum" {
@@ -163,7 +164,7 @@ func applyGraphChange(ctx context.Context, tx pgx.Tx, p GraphProposalPayload) er
 		return err
 	}
 	if p.Operation == "extend_enum" {
-		var config json.RawMessage
+		var config jsontext.Value
 		if err := tx.QueryRow(ctx, `select config from field_definitions where key=$1 and data_type='enum' for update`, p.Key).Scan(&config); err != nil {
 			return err
 		}
