@@ -3,7 +3,8 @@ package store
 import (
 	"context"
 	"embed"
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"net/url"
@@ -27,50 +28,50 @@ const DefaultUserID = "00000000-0000-0000-0000-000000000001"
 var ErrNotFound = errors.New("not found")
 
 type Category struct {
-	IntakeConfig  IntakeConfig    `json:"intake_config" db:"intake_config"`
-	DefaultTags   []string        `json:"default_tags" db:"default_tags"`
-	DefaultValues json.RawMessage `json:"default_values" db:"default_values"`
-	ID            string          `json:"id" db:"id"`
-	UserID        string          `json:"user_id" db:"user_id"`
-	Name          string          `json:"name" db:"name"`
-	Description   string          `json:"description,omitempty" db:"description"`
-	Attributes    []Attribute     `json:"attributes,omitempty" db:"-"`
-	CreatedAt     time.Time       `json:"created_at" db:"created_at"`
-	UpdatedAt     time.Time       `json:"updated_at" db:"updated_at"`
+	IntakeConfig  IntakeConfig   `json:"intake_config" db:"intake_config"`
+	DefaultTags   []string       `json:"default_tags" db:"default_tags"`
+	DefaultValues jsontext.Value `json:"default_values" db:"default_values"`
+	ID            string         `json:"id" db:"id"`
+	UserID        string         `json:"user_id" db:"user_id"`
+	Name          string         `json:"name" db:"name"`
+	Description   string         `json:"description,omitempty" db:"description"`
+	Attributes    []Attribute    `json:"attributes,omitempty" db:"-"`
+	CreatedAt     time.Time      `json:"created_at" db:"created_at"`
+	UpdatedAt     time.Time      `json:"updated_at" db:"updated_at"`
 }
 
 type Attribute struct {
-	ID           string          `json:"id" db:"id"`
-	CategoryID   string          `json:"category_id" db:"category_id"`
-	Key          string          `json:"key" db:"key"`
-	Label        string          `json:"label" db:"label"`
-	DataType     string          `json:"data_type" db:"data_type"`
-	Required     bool            `json:"required" db:"required"`
-	DisplayOrder int             `json:"display_order" db:"display_order"`
-	Config       json.RawMessage `json:"config,omitempty" db:"config"`
+	ID           string         `json:"id" db:"id"`
+	CategoryID   string         `json:"category_id" db:"category_id"`
+	Key          string         `json:"key" db:"key"`
+	Label        string         `json:"label" db:"label"`
+	DataType     string         `json:"data_type" db:"data_type"`
+	Required     bool           `json:"required" db:"required"`
+	DisplayOrder int            `json:"display_order" db:"display_order"`
+	Config       jsontext.Value `json:"config,omitempty" db:"config"`
 }
 
 type AttributeDraft struct {
-	Key          string          `json:"key"`
-	Label        string          `json:"label"`
-	DataType     string          `json:"data_type"`
-	Required     bool            `json:"required"`
-	DisplayOrder int             `json:"display_order"`
-	Config       json.RawMessage `json:"config,omitempty"`
+	Key          string         `json:"key"`
+	Label        string         `json:"label"`
+	DataType     string         `json:"data_type"`
+	Required     bool           `json:"required"`
+	DisplayOrder int            `json:"display_order"`
+	Config       jsontext.Value `json:"config,omitempty"`
 }
 
 type Item struct {
-	Tags       []string        `json:"tags" db:"tags"`
-	Location   string          `json:"-" db:"location"`
-	ID         string          `json:"id" db:"id"`
-	UserID     string          `json:"user_id" db:"user_id"`
-	CategoryID string          `json:"category_id" db:"category_id"`
-	Title      string          `json:"title" db:"title"`
-	Attributes json.RawMessage `json:"attributes" db:"attributes"`
-	Quantity   int             `json:"-" db:"quantity"`
-	CreatedAt  time.Time       `json:"created_at" db:"created_at"`
-	UpdatedAt  time.Time       `json:"updated_at" db:"updated_at"`
-	Images     []ItemImage     `json:"images" db:"-"`
+	Tags       []string       `json:"tags" db:"tags"`
+	Location   string         `json:"-" db:"location"`
+	ID         string         `json:"id" db:"id"`
+	UserID     string         `json:"user_id" db:"user_id"`
+	CategoryID string         `json:"category_id" db:"category_id"`
+	Title      string         `json:"title" db:"title"`
+	Attributes jsontext.Value `json:"attributes" db:"attributes"`
+	Quantity   int            `json:"-" db:"quantity"`
+	CreatedAt  time.Time      `json:"created_at" db:"created_at"`
+	UpdatedAt  time.Time      `json:"updated_at" db:"updated_at"`
+	Images     []ItemImage    `json:"images" db:"-"`
 }
 
 type ItemImage struct {
@@ -90,20 +91,20 @@ type ItemImage struct {
 }
 
 type Proposal struct {
-	ID              string          `json:"id"`
-	UserID          string          `json:"user_id"`
-	Type            string          `json:"type"`
-	Status          string          `json:"status"`
-	ProposedPayload json.RawMessage `json:"proposed_payload"`
-	Reason          string          `json:"reason,omitempty"`
-	CreatedAt       time.Time       `json:"created_at"`
-	DecidedAt       *time.Time      `json:"decided_at,omitempty"`
+	ID              string         `json:"id"`
+	UserID          string         `json:"user_id"`
+	Type            string         `json:"type"`
+	Status          string         `json:"status"`
+	ProposedPayload jsontext.Value `json:"proposed_payload"`
+	Reason          string         `json:"reason,omitempty"`
+	CreatedAt       time.Time      `json:"created_at"`
+	DecidedAt       *time.Time     `json:"decided_at,omitempty"`
 }
 
 type CategoryProposalPayload struct {
 	IntakeConfig  *IntakeConfig    `json:"intake_config,omitempty"`
 	DefaultTags   []string         `json:"default_tags,omitempty"`
-	DefaultValues json.RawMessage  `json:"default_values,omitempty"`
+	DefaultValues jsontext.Value   `json:"default_values,omitempty"`
 	Operation     string           `json:"operation"`
 	CategoryID    string           `json:"category_id,omitempty"`
 	Name          string           `json:"name"`
@@ -112,18 +113,18 @@ type CategoryProposalPayload struct {
 }
 
 type ItemProposalPayload struct {
-	RemoveFields       []string        `json:"remove_fields,omitempty"`
-	PrimaryImageID     *string         `json:"primary_image_id,omitempty"`
-	Tags               []string        `json:"tags"`
-	Location           *string         `json:"location,omitempty"`
-	Operation          string          `json:"operation"`
-	CategoryID         string          `json:"category_id"`
-	ItemID             string          `json:"item_id,omitempty"`
-	Title              string          `json:"title"`
-	Attributes         json.RawMessage `json:"attributes"`
-	PreviousAttributes json.RawMessage `json:"previous_attributes,omitempty"`
-	Quantity           int             `json:"quantity,omitempty"`
-	QuantityDelta      int             `json:"quantity_delta,omitempty"`
+	RemoveFields       []string       `json:"remove_fields,omitempty"`
+	PrimaryImageID     *string        `json:"primary_image_id,omitempty"`
+	Tags               []string       `json:"tags"`
+	Location           *string        `json:"location,omitempty"`
+	Operation          string         `json:"operation"`
+	CategoryID         string         `json:"category_id"`
+	ItemID             string         `json:"item_id,omitempty"`
+	Title              string         `json:"title"`
+	Attributes         jsontext.Value `json:"attributes"`
+	PreviousAttributes jsontext.Value `json:"previous_attributes,omitempty"`
+	Quantity           int            `json:"quantity,omitzero"`
+	QuantityDelta      int            `json:"quantity_delta,omitzero"`
 }
 
 type ProposalDecision struct {
@@ -432,7 +433,7 @@ func (s *Store) CreateCategoryProposal(ctx context.Context, payload CategoryProp
 		return Proposal{}, err
 	}
 	if len(payload.DefaultValues) == 0 {
-		payload.DefaultValues = json.RawMessage(`{}`)
+		payload.DefaultValues = jsontext.Value(`{}`)
 	}
 	if err := validateItemAttributeValues(payload.DefaultValues, fieldAttributes(fields)); err != nil {
 		return Proposal{}, err
@@ -506,7 +507,7 @@ func (s *Store) ListPendingProposals(ctx context.Context, limit int) ([]Proposal
 	return proposals, rows.Err()
 }
 
-func (s *Store) RevisePendingProposal(ctx context.Context, proposalID string, payload json.RawMessage) (Proposal, error) {
+func (s *Store) RevisePendingProposal(ctx context.Context, proposalID string, payload jsontext.Value) (Proposal, error) {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return Proposal{}, err
@@ -525,7 +526,7 @@ func (s *Store) RevisePendingProposal(ctx context.Context, proposalID string, pa
 	if proposal.Status != "pending" {
 		return Proposal{}, errors.New("only pending proposals can be revised")
 	}
-	if !json.Valid(payload) {
+	if !jsontext.Value(payload).IsValid() {
 		return Proposal{}, errors.New("revised proposal payload must be valid JSON")
 	}
 
@@ -750,8 +751,8 @@ func validateCategoryProposalPayload(payload *CategoryProposalPayload) error {
 			return fmt.Errorf("attribute %q has unsupported data_type %q", attribute.Key, attribute.DataType)
 		}
 		if len(attribute.Config) == 0 {
-			attribute.Config = json.RawMessage(`{}`)
-		} else if !json.Valid(attribute.Config) {
+			attribute.Config = jsontext.Value(`{}`)
+		} else if !jsontext.Value(attribute.Config).IsValid() {
 			return fmt.Errorf("attribute %q config must be valid JSON", attribute.Key)
 		}
 	}
@@ -763,7 +764,7 @@ func (s *Store) validateItemProposalPayload(ctx context.Context, payload ItemPro
 		payload.Operation = "create"
 	}
 	if len(payload.Attributes) == 0 {
-		payload.Attributes = json.RawMessage(`{}`)
+		payload.Attributes = jsontext.Value(`{}`)
 	}
 	if payload.Operation == "create" && payload.Quantity == 0 {
 		payload.Quantity = 1
@@ -819,7 +820,7 @@ func (s *Store) validateItemProposalPayload(ctx context.Context, payload ItemPro
 	return payload, nil
 }
 
-func validateItemAttributeValues(raw json.RawMessage, definitions []Attribute) error {
+func validateItemAttributeValues(raw jsontext.Value, definitions []Attribute) error {
 	var values map[string]any
 	if err := json.Unmarshal(raw, &values); err != nil || values == nil {
 		return errors.New("attributes must be a JSON object")
@@ -906,7 +907,7 @@ func applyCategoryChange(ctx context.Context, tx pgx.Tx, userID string, payload 
 			payload.Attributes[i].Required = false
 		}
 		if len(payload.DefaultValues) == 0 {
-			payload.DefaultValues = json.RawMessage(`{}`)
+			payload.DefaultValues = jsontext.Value(`{}`)
 		}
 		if err := validateItemAttributeValues(payload.DefaultValues, fieldAttributes(fields)); err != nil {
 			return err
@@ -946,7 +947,7 @@ func insertCategory(ctx context.Context, tx pgx.Tx, userID string, payload Categ
 		}
 		config := attr.Config
 		if len(config) == 0 {
-			config = json.RawMessage(`{}`)
+			config = jsontext.Value(`{}`)
 		}
 		if _, err := tx.Exec(ctx, `insert into category_attributes
 			(category_id, key, label, data_type, required, display_order, config_json)
@@ -978,7 +979,7 @@ func updateCategory(ctx context.Context, tx pgx.Tx, userID string, payload Categ
 		}
 		config := attr.Config
 		if len(config) == 0 {
-			config = json.RawMessage(`{}`)
+			config = jsontext.Value(`{}`)
 		}
 		if _, err := tx.Exec(ctx, `insert into category_attributes
 			(category_id, key, label, data_type, required, display_order, config_json)
@@ -993,7 +994,7 @@ func updateCategory(ctx context.Context, tx pgx.Tx, userID string, payload Categ
 func applyItemChange(ctx context.Context, tx pgx.Tx, userID string, payload ItemProposalPayload) (string, error) {
 	attributes := payload.Attributes
 	if len(attributes) == 0 {
-		attributes = json.RawMessage(`{}`)
+		attributes = jsontext.Value(`{}`)
 	}
 	payload.CategoryID = ""
 	if payload.Operation == "create" || payload.Operation == "update" {

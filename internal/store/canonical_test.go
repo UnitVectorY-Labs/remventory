@@ -2,7 +2,8 @@ package store
 
 import (
 	"context"
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"fmt"
 	"github.com/UnitVectorY-Labs/remventory/internal/authority"
 	"github.com/google/uuid"
@@ -89,7 +90,7 @@ func TestCanonicalApprovalDatesAndOwnership(t *testing.T) {
 	if err = s.FinishIdentification(ctx, claimed, result, nil); err != nil {
 		t.Fatal(err)
 	}
-	p, err := s.ProposeIdentification(ctx, IdentificationProposal{JobID: j.ID, Selected: []int{0}, Title: "My physical box", Tags: []string{"Blu-ray"}, Attributes: json.RawMessage(`{"title":"My physical box"}`)})
+	p, err := s.ProposeIdentification(ctx, IdentificationProposal{JobID: j.ID, Selected: []int{0}, Title: "My physical box", Tags: []string{"Blu-ray"}, Attributes: jsontext.Value(`{"title":"My physical box"}`)})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -206,7 +207,7 @@ func TestPartialItemUpdatesPreserveOmittedFields(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	p, err := s.CreateItemProposal(ctx, ItemProposalPayload{Operation: "update", ItemID: id, Tags: []string{"Movies", "Box set"}, Attributes: json.RawMessage(`{}`)})
+	p, err := s.CreateItemProposal(ctx, ItemProposalPayload{Operation: "update", ItemID: id, Tags: []string{"Movies", "Box set"}, Attributes: jsontext.Value(`{}`)})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -222,11 +223,11 @@ func TestPartialItemUpdatesPreserveOmittedFields(t *testing.T) {
 	if item.Title != "Original" || fields["condition"] != "Mine" || fields["year"] != float64(1999) {
 		t.Fatal("tag-only update replaced personal fields", item)
 	}
-	stale, err := s.CreateItemProposal(ctx, ItemProposalPayload{Operation: "update", ItemID: id, Attributes: json.RawMessage(`{"year":2000}`)})
+	stale, err := s.CreateItemProposal(ctx, ItemProposalPayload{Operation: "update", ItemID: id, Attributes: jsontext.Value(`{"year":2000}`)})
 	if err != nil {
 		t.Fatal(err)
 	}
-	removal, err := s.CreateItemProposal(ctx, ItemProposalPayload{Operation: "update", ItemID: id, RemoveFields: []string{"condition"}, Attributes: json.RawMessage(`{}`)})
+	removal, err := s.CreateItemProposal(ctx, ItemProposalPayload{Operation: "update", ItemID: id, RemoveFields: []string{"condition"}, Attributes: jsontext.Value(`{}`)})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -299,7 +300,7 @@ func TestHumanCanConfirmSourceValidatedAlternative(t *testing.T) {
 	if err = s.FinishIdentification(ctx, claimed, IdentificationResult{Matches: []IdentificationMatch{{Graph: g, Confidence: "rejected"}}}, nil); err != nil {
 		t.Fatal(err)
 	}
-	draft := IdentificationProposal{JobID: j.ID, Title: "Mario — Super Mario Bros. amiibo", Selected: []int{0}, Attributes: json.RawMessage(`{"title":"Mario — Super Mario Bros. amiibo"}`), Tags: []string{"Amiibo"}}
+	draft := IdentificationProposal{JobID: j.ID, Title: "Mario — Super Mario Bros. amiibo", Selected: []int{0}, Attributes: jsontext.Value(`{"title":"Mario — Super Mario Bros. amiibo"}`), Tags: []string{"Amiibo"}}
 	if _, err = s.ProposeIdentification(ctx, draft); err == nil {
 		t.Fatal("automated rejection silently bypassed")
 	}

@@ -1,7 +1,8 @@
 package httpapi
 
 import (
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"github.com/UnitVectorY-Labs/remventory/internal/authority"
 	"github.com/UnitVectorY-Labs/remventory/internal/store"
 	"net/http"
@@ -39,7 +40,7 @@ func (a api) proposeCatalogue(w http.ResponseWriter, r *http.Request) {
 			writeError(w, 400, "give the reference link a name")
 			return
 		}
-		var attrs map[string]json.RawMessage
+		var attrs map[string]jsontext.Value
 		json.Unmarshal(item.Attributes, &attrs)
 		links := []map[string]string{}
 		if len(attrs["links"]) > 0 {

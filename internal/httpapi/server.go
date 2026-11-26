@@ -3,7 +3,7 @@ package httpapi
 import (
 	"crypto/sha256"
 	"embed"
-	"encoding/json"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"io"
@@ -563,9 +563,7 @@ func (a api) withToken(next http.HandlerFunc) http.HandlerFunc {
 
 func decodeJSON(w http.ResponseWriter, r *http.Request, target any) bool {
 	defer r.Body.Close()
-	decoder := json.NewDecoder(r.Body)
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(target); err != nil {
+	if err := json.UnmarshalRead(r.Body, target, json.RejectUnknownMembers(true)); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid json: "+err.Error())
 		return false
 	}
@@ -590,7 +588,7 @@ func queryInt(r *http.Request, key string, fallback int) int {
 func writeJSON(w http.ResponseWriter, status int, value any) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
-	if err := json.NewEncoder(w).Encode(value); err != nil && !errors.Is(err, http.ErrHandlerTimeout) {
+	if err := json.MarshalWrite(w, value); err != nil && !errors.Is(err, http.ErrHandlerTimeout) {
 		http.Error(w, "encode response", http.StatusInternalServerError)
 	}
 }

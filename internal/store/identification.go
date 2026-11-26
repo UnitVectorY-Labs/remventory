@@ -3,7 +3,8 @@ package store
 import (
 	"context"
 	"crypto/sha256"
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"fmt"
 	"github.com/UnitVectorY-Labs/remventory/internal/authority"
 	"github.com/jackc/pgx/v5"
@@ -12,12 +13,12 @@ import (
 )
 
 type IdentificationInput struct {
-	DefaultTags   []string        `json:"default_tags,omitempty"`
-	DefaultValues json.RawMessage `json:"default_values,omitempty"`
-	FieldKeys     []string        `json:"field_keys,omitempty"`
-	Policy        *IntakeConfig   `json:"policy,omitempty"`
-	Text          string          `json:"text"`
-	TemplateID    string          `json:"template_id,omitempty"`
+	DefaultTags   []string       `json:"default_tags,omitempty"`
+	DefaultValues jsontext.Value `json:"default_values,omitempty"`
+	FieldKeys     []string       `json:"field_keys,omitempty"`
+	Policy        *IntakeConfig  `json:"policy,omitempty"`
+	Text          string         `json:"text"`
+	TemplateID    string         `json:"template_id,omitempty"`
 }
 type IdentificationMatch struct {
 	Display    authority.DisplayPlan `json:"display"`
@@ -344,17 +345,17 @@ func (s *Store) ReplaceIdentificationResult(ctx context.Context, id string, resu
 }
 
 type IdentificationProposal struct {
-	PrimaryPhotoID        string          `json:"primary_photo_id,omitempty"`
-	ReplaceExisting       bool            `json:"replace_existing,omitempty"`
-	ExistingLinksSnapshot string          `json:"existing_links_snapshot,omitempty"`
-	ConfirmAlternative    bool            `json:"confirm_alternative,omitempty"`
-	JobID                 string          `json:"job_id"`
-	Selected              []int           `json:"selected"`
-	Title                 string          `json:"title"`
-	Tags                  []string        `json:"tags"`
-	Attributes            json.RawMessage `json:"attributes"`
-	ItemID                string          `json:"item_id,omitempty"`
-	ResultSnapshot        string          `json:"result_snapshot"`
+	PrimaryPhotoID        string         `json:"primary_photo_id,omitempty"`
+	ReplaceExisting       bool           `json:"replace_existing,omitzero"`
+	ExistingLinksSnapshot string         `json:"existing_links_snapshot,omitempty"`
+	ConfirmAlternative    bool           `json:"confirm_alternative,omitzero"`
+	JobID                 string         `json:"job_id"`
+	Selected              []int          `json:"selected"`
+	Title                 string         `json:"title"`
+	Tags                  []string       `json:"tags"`
+	Attributes            jsontext.Value `json:"attributes"`
+	ItemID                string         `json:"item_id,omitempty"`
+	ResultSnapshot        string         `json:"result_snapshot"`
 }
 
 func (s *Store) ProposeIdentification(ctx context.Context, p IdentificationProposal) (Proposal, error) {
@@ -570,7 +571,7 @@ func (s *Store) QueueEnrichment(ctx context.Context, tag string, limit int) ([]I
 
 // Templates with a Console field require an owned-copy console during intake.
 // The selected catalogue work may list many platforms or omit platform claims.
-func validateIdentificationConsole(j IdentificationJob, attributes json.RawMessage) error {
+func validateIdentificationConsole(j IdentificationJob, attributes jsontext.Value) error {
 	if j.ItemID != "" {
 		return nil
 	}
@@ -592,7 +593,7 @@ func validateIdentificationConsole(j IdentificationJob, attributes json.RawMessa
 
 // Old intake jobs retain their original template tags. Correct those defaults
 // when the owner confirms a console, without changing the pending job itself.
-func identificationTags(j IdentificationJob, tags []string, attributes json.RawMessage) []string {
+func identificationTags(j IdentificationJob, tags []string, attributes jsontext.Value) []string {
 	hasConsole := false
 	for _, key := range j.Input.FieldKeys {
 		if key == "console" {

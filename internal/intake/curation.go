@@ -2,7 +2,7 @@ package intake
 
 import (
 	"context"
-	"encoding/json"
+	"encoding/json/v2"
 	"fmt"
 	"github.com/UnitVectorY-Labs/remventory/internal/authority"
 	"github.com/UnitVectorY-Labs/remventory/internal/store"
